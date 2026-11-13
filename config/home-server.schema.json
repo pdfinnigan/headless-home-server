@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "headless-home-server config",
+  "description": "Identifiers and choices only. Secrets (tunnel credentials, API keys, passwords) never go in this file.",
+  "type": "object",
+  "required": ["server", "services"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "server": {
+      "type": "object",
+      "required": ["adminUser", "serviceUser", "repoPath"],
+      "properties": {
+        "name": { "type": "string", "description": "Friendly name, used in messages." },
+        "adminUser": { "type": "string", "description": "The macOS admin account you log in with. Deploys run as this user." },
+        "serviceUser": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,30}$", "description": "Hidden non-admin account that runs every service and the tunnel." },
+        "lanIp": { "type": "string", "description": "The server's LAN address, for the SSH alias. Reserve it on your router." },
+        "sshAlias": { "type": "string", "default": "homeserver" },
+        "repoPath": { "type": "string", "description": "Where your clone lives on the server, e.g. ~/git/my-home-server." },
+        "branch": { "type": "string", "default": "main" }
+      }
+    },
+    "exposure": {
+      "type": "object",
+      "description": "Needed only when a service uses auth public or access.",
+      "properties": {
+        "provider": { "enum": ["cloudflare"] },
+        "domain": { "type": "string" },
+        "tunnelId": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+        "accessTeam": { "type": "string", "description": "Cloudflare Zero Trust team name, for services with auth access." }
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "dir", "run", "port", "expose"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+          "dir": { "type": "string", "description": "Folder in this repo that holds the service. It is copied to the service user's home on deploy." },
+          "run": { "type": "string", "description": "Command started inside that folder, as the service user. It gets PORT and HOST=127.0.0.1." },
+          "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+          "expose": {
+            "type": "object",
+            "required": ["auth"],
+            "properties": {
+              "auth": {
+                "enum": ["public", "access", "tailscale", "local"],
+                "description": "public: anyone on the internet via the tunnel (the service does its own auth). access: via the tunnel, behind a Cloudflare Access policy. tailscale: only your tailnet. local: only this machine (reach it over SSH)."
+              },
+              "hostname": { "type": "string", "description": "Public hostname, for public and access." },
+              "accessAud": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Application Audience tag of the Access app, for access." }
+            }
+          }
+        }
+      }
+    }
+  }
+}

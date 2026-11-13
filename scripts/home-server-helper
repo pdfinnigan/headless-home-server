@@ -1,0 +1,155 @@
+#!/bin/sh
+# The only thing that runs as root without a password. Installed as
+# /usr/local/sbin/home-server-helper (root:wheel 755) by scripts/install-helper.sh, which also
+# writes /usr/local/etc/home-server/helper.conf and a NOPASSWD sudoers rule for the admin user.
+#
+#   home-server-helper service <name>   install or update one service from its staged copy
+#   home-server-helper remove <name>    stop one service and remove its files
+#   home-server-helper tunnel           install the staged tunnel config and (re)start cloudflared
+#
+# What it can do as root is narrow on purpose: copy staged files into the service user's home,
+# run npm ci there AS the service user, and write LaunchDaemons whose UserName is always the
+# service user. So the admin account can make the service user run code, never root.
+# It reads no environment. Its settings come from the root-owned helper.conf.
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 022
+
+CONF=/usr/local/etc/home-server/helper.conf
+STAGE=/usr/local/var/home-server/stage
+PREFIX=local.home-server
+die() { echo "home-server-helper: $*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "run with sudo"
+[ -f "$CONF" ] && [ ! -L "$CONF" ] || die "$CONF is missing"
+[ "$(stat -f %u "$CONF")" = 0 ] || die "$CONF must be owned by root"
+SERVICE_USER="$(sed -n 's/^SERVICE_USER=\([a-z_][a-z0-9_]*\)$/\1/p' "$CONF")"
+[ -n "$SERVICE_USER" ] || die "SERVICE_USER missing from $CONF"
+id "$SERVICE_USER" >/dev/null 2>&1 || die "service user $SERVICE_USER doesn't exist"
+SVC_HOME="$(dscl . -read "/Users/$SERVICE_USER" NFSHomeDirectory | awk '{print $2}')"
+[ -d "$SVC_HOME" ] && [ ! -L "$SVC_HOME" ] || die "service user's home is missing"
+
+find_bin() { for p in /opt/homebrew/bin/$1 /usr/local/bin/$1; do [ -x "$p" ] && { echo "$p"; return 0; }; done; return 1; }
+xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
+as_svc() { sudo -u "$SERVICE_USER" -H env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin "$@"; }
+
+load_daemon() {  # load_daemon <label> <rendered plist>
+  dst="/Library/LaunchDaemons/$1.plist"
+  plutil -lint "$2" >/dev/null || die "rendered plist for $1 is invalid"
+  install -m 644 -o root -g wheel "$2" "$dst"
+  launchctl bootout "system/$1" >/dev/null 2>&1 || true
+  launchctl bootstrap system "$dst"
+  launchctl kickstart -k "system/$1"
+}
+
+valid_name() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; }
+
+cmd="${1:-}"; name="${2:-}"
+case "$cmd" in
+service)
+  valid_name "$name" || die "bad service name"
+  SRC="$STAGE/$name"
+  [ -d "$SRC/app" ] && [ -f "$SRC/service.conf" ] || die "nothing staged for $name"
+  [ -z "$(find "$SRC" -type l)" ] || die "staged files contain a symlink"
+  RUN="$(sed -n 's/^RUN=//p' "$SRC/service.conf" | head -1)"
+  PORT="$(sed -n 's/^PORT=\([0-9][0-9]*\)$/\1/p' "$SRC/service.conf" | head -1)"
+  [ -n "$RUN" ] || die "RUN missing"
+  [ -n "$PORT" ] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || die "PORT must be 1024-65535"
+
+  TMP="$(mktemp -d /var/tmp/home-server-helper.XXXXXX)"
+  trap 'rm -rf "$TMP"' EXIT
+  cp -R "$SRC/app" "$TMP/app"
+  chown -R "$SERVICE_USER" "$TMP/app"
+  if [ -f "$TMP/app/package-lock.json" ]; then
+    NPM="$(find_bin npm)" || die "this service has a package-lock.json but npm wasn't found"
+    (cd "$TMP/app" && as_svc "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-fund --silent) \
+      || die "npm ci failed; the running copy is unchanged"
+  fi
+
+  install -d -o "$SERVICE_USER" -m 755 "$SVC_HOME/services" "$SVC_HOME/Library/Logs"
+  DST="$SVC_HOME/services/$name"
+  [ ! -L "$DST" ] || die "$DST is a symlink"
+  rm -rf "$DST.old"
+  [ -d "$DST" ] && mv -h "$DST" "$DST.old"
+  mv -h "$TMP/app" "$DST"
+  rm -rf "$DST.old"
+
+  LABEL="$PREFIX.$name"
+  cat > "$TMP/plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>UserName</key><string>$SERVICE_USER</string>
+  <key>WorkingDirectory</key><string>$(xml "$DST")</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/sh</string><string>-c</string><string>exec $(xml "$RUN")</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>$(xml "$SVC_HOME")</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>HOST</key><string>127.0.0.1</string>
+    <key>PORT</key><string>$PORT</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$(xml "$SVC_HOME/Library/Logs/$name.log")</string>
+  <key>StandardErrorPath</key><string>$(xml "$SVC_HOME/Library/Logs/$name.log")</string>
+</dict>
+</plist>
+EOF
+  load_daemon "$LABEL" "$TMP/plist"
+  echo "home-server-helper: $name is running as $SERVICE_USER on 127.0.0.1:$PORT"
+  ;;
+
+remove)
+  valid_name "$name" || die "bad service name"
+  LABEL="$PREFIX.$name"
+  launchctl bootout "system/$LABEL" >/dev/null 2>&1 || true
+  rm -f "/Library/LaunchDaemons/$LABEL.plist"
+  [ -L "$SVC_HOME/services/$name" ] || rm -rf "$SVC_HOME/services/$name"
+  echo "home-server-helper: removed $name"
+  ;;
+
+tunnel)
+  SRC="$STAGE/tunnel/config.yml"
+  [ -f "$SRC" ] && [ ! -L "$SRC" ] || die "no staged tunnel config"
+  CLOUDFLARED="$(find_bin cloudflared)" || die "cloudflared isn't installed (brew install cloudflared)"
+  CF="$SVC_HOME/.cloudflared"
+  [ -d "$CF" ] && [ ! -L "$CF" ] || die "$CF is missing. Run scripts/setup-tunnel.sh once first."
+  ls "$CF"/*.json >/dev/null 2>&1 || die "no tunnel credentials in $CF. Run scripts/setup-tunnel.sh once first."
+  install -m 600 -o "$SERVICE_USER" "$SRC" "$CF/config.yml.new"
+  as_svc "$CLOUDFLARED" tunnel --config "$CF/config.yml.new" ingress validate >/dev/null \
+    || { rm -f "$CF/config.yml.new"; die "cloudflared rejected the tunnel config"; }
+  mv -f "$CF/config.yml.new" "$CF/config.yml"
+
+  TMP="$(mktemp -d /var/tmp/home-server-helper.XXXXXX)"
+  trap 'rm -rf "$TMP"' EXIT
+  LABEL="$PREFIX.cloudflared"
+  cat > "$TMP/plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>UserName</key><string>$SERVICE_USER</string>
+  <key>ProgramArguments</key>
+  <array><string>$CLOUDFLARED</string><string>tunnel</string><string>--no-autoupdate</string><string>--config</string><string>$(xml "$CF/config.yml")</string><string>run</string></array>
+  <key>EnvironmentVariables</key><dict><key>HOME</key><string>$(xml "$SVC_HOME")</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$(xml "$SVC_HOME/Library/Logs/cloudflared.log")</string>
+  <key>StandardErrorPath</key><string>$(xml "$SVC_HOME/Library/Logs/cloudflared.log")</string>
+</dict>
+</plist>
+EOF
+  load_daemon "$LABEL" "$TMP/plist"
+  echo "home-server-helper: tunnel config installed and cloudflared restarted"
+  ;;
+
+*) die "usage: home-server-helper service <name> | remove <name> | tunnel" ;;
+esac

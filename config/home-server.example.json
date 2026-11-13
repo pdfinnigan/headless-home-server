@@ -1,0 +1,41 @@
+{
+  "$schema": "./home-server.schema.json",
+  "server": {
+    "name": "homeserver",
+    "adminUser": "you",
+    "serviceUser": "svc",
+    "lanIp": "192.0.2.10",
+    "sshAlias": "homeserver",
+    "repoPath": "~/git/my-home-server",
+    "branch": "main"
+  },
+  "exposure": {
+    "provider": "cloudflare",
+    "domain": "example.com",
+    "tunnelId": "00000000-0000-0000-0000-000000000000",
+    "accessTeam": "your-team"
+  },
+  "services": [
+    {
+      "name": "site",
+      "dir": "services/examples/static-site",
+      "run": "node server.js",
+      "port": 8080,
+      "expose": { "hostname": "www.example.com", "auth": "public" }
+    },
+    {
+      "name": "api",
+      "dir": "services/examples/http-api",
+      "run": "node server.js",
+      "port": 8081,
+      "expose": { "hostname": "api.example.com", "auth": "access", "accessAud": "0000000000000000000000000000000000000000000000000000000000000000" }
+    },
+    {
+      "name": "mcp",
+      "dir": "services/examples/mcp-server",
+      "run": "node server.js",
+      "port": 8765,
+      "expose": { "auth": "tailscale" }
+    }
+  ]
+}
