@@ -48,7 +48,17 @@ else
   createhomedir -c -u "$SVC" >/dev/null
   say "created hidden service user $SVC (uid $uid, no password, no login shell)"
 fi
+# Its own primary group and a home only it can open: in the default group (staff) it could read
+# every 750 home on the Mac, yours included. scripts/home-server-helper does the same per service.
 SVC_HOME="$(user_home "$SVC")"
+gid="$(dscl . -read "/Groups/$SVC" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
+if [ -z "$gid" ]; then
+  for c in $(id -u "$SVC") $(seq 401 499); do dscl . -search /Groups PrimaryGroupID "$c" | grep -q . || { gid="$c"; break; }; done
+  [ -n "$gid" ] || die "no free group id for $SVC"
+  dseditgroup -o create -i "$gid" -r "Home server services" "$SVC"
+fi
+[ "$(id -g "$SVC")" = "$gid" ] || dscl . -create "/Users/$SVC" PrimaryGroupID "$gid"
+chgrp "$gid" "$SVC_HOME"; chmod 700 "$SVC_HOME"
 install -d -o "$SVC" -m 755 "$SVC_HOME/services" "$SVC_HOME/Library/Logs"
 install -d -o "$SVC" -m 700 "$SVC_HOME/.cloudflared"
 

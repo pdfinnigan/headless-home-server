@@ -57,7 +57,7 @@ ensure_user() {
   [ -n "$uid" ] || die "no free UID between 401 and 499"
   dscl . -create "/Users/$u"
   dscl . -create "/Users/$u" UniqueID "$uid"
-  dscl . -create "/Users/$u" PrimaryGroupID 20
+  dscl . -create "/Users/$u" PrimaryGroupID 20   # private_group below replaces it
   dscl . -create "/Users/$u" UserShell /usr/bin/false
   dscl . -create "/Users/$u" RealName "Home server service"
   dscl . -create "/Users/$u" NFSHomeDirectory "/Users/$u"
@@ -65,6 +65,22 @@ ensure_user() {
   dscl . -create "/Users/$u" Password '*'
   createhomedir -c -u "$u" >/dev/null
   echo "home-server-helper: created hidden service user $u (uid $uid)"
+}
+
+# private_group <user>: give a service user its own primary group and a home only it can open.
+# In the default group (staff) it could read every 750 home on the Mac, the admin's included.
+private_group() {
+  u="$1"
+  g="$(dscl . -read "/Groups/$u" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
+  if [ -z "$g" ]; then
+    for c in $(id -u "$u") $(seq 401 499); do dscl . -search /Groups PrimaryGroupID "$c" | grep -q . || { g="$c"; break; }; done
+    [ -n "$g" ] || die "no free group id for $u"
+    dseditgroup -o create -i "$g" -r "Home server service" "$u"
+  fi
+  [ "$(id -g "$u")" = "$g" ] || dscl . -create "/Users/$u" PrimaryGroupID "$g"
+  h="$(home_of "$u")"
+  [ -d "$h" ] && [ ! -L "$h" ] || die "$u's home is missing"
+  chgrp "$g" "$h"; chmod 700 "$h"
 }
 
 load_daemon() {  # load_daemon <label> <rendered plist>
@@ -92,6 +108,7 @@ service)
   [ -n "$RUN" ] || die "RUN missing"
   [ -n "$PORT" ] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || die "PORT must be 1024-65535"
   if [ "$ISOLATION" = shared ]; then RUN_USER="$SERVICE_USER"; else RUN_USER="$(own_user "$name")"; ensure_user "$RUN_USER"; fi
+  private_group "$RUN_USER"
   RUN_HOME="$(home_of "$RUN_USER")"
   [ -d "$RUN_HOME" ] && [ ! -L "$RUN_HOME" ] || die "$RUN_USER's home is missing"
 
