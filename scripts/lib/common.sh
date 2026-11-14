@@ -36,7 +36,8 @@ need_config() {
 cfg() {
   local path="$1" def="${2:-}" out=""
   if [ -x /usr/bin/plutil ]; then
-    out="$(/usr/bin/plutil -extract "$path" raw -o - "$HS_CONFIG" 2>/dev/null || true)"
+    # plutil prints "Could not extract value" on stdout, not stderr, so trust only a zero exit.
+    out="$(/usr/bin/plutil -extract "$path" raw -o - "$HS_CONFIG" 2>/dev/null)" || out=""
   elif command -v jq >/dev/null 2>&1; then
     local jqpath; jqpath="$(printf '%s' "$path" | awk -F. '{for(i=1;i<=NF;i++){printf ($i ~ /^[0-9]+$/) ? "[" $i "]" : "[\"" $i "\"]"}}')"
     out="$(jq -r "getpath(path(.$jqpath)) // empty | if type == \"array\" or type == \"object\" then length else . end" "$HS_CONFIG" 2>/dev/null || true)"

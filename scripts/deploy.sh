@@ -38,6 +38,12 @@ fi
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 STATE="$HOME/.home-server/deploy"
 mkdir -p "$STATE"
+# Started by the watcher: deploy only for a request newer than the last one handled. (launchd
+# also starts it once when the watcher is loaded, with nothing new.)
+if [ "${HS_TRIGGER:-}" = watch ] && [ "$NO_PULL" = 0 ]; then
+  [ "$HS_STATE_DIR/request" -nt "$STATE/request.seen" ] || exit 0
+  touch "$STATE/request.seen"
+fi
 cd "$HS_ROOT"
 [ -d .git ] || die "$HS_ROOT is not a git clone. Run scripts/setup-server.sh."
 
