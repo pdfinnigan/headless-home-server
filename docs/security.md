@@ -12,7 +12,11 @@ Everything here is on after `scripts/harden.sh` and `scripts/install-helper.sh`,
 3. **Each service runs as its own hidden non-admin user** (`<serviceUser>_<name>`) with no
    password and no login shell, its own home, `secrets/` and `data/`. A bug in one service can't
    touch your account, the system, or another service's files. (`"user": "shared"` runs a service
-   as the tunnel's user instead, for services that need to share files.)
+   as the tunnel's user instead, for services that need to share files. Switching a service
+   between the two doesn't move its `secrets/` or `data/`: copy them over yourself. Removing a
+   service keeps its user and files, so adding it back finds them; delete the user with
+   `sudo sysadminctl -deleteUser <user>` to remove it for good.) Only `"user": "shared"` services
+   can request a deploy (the request file belongs to the shared user).
 4. **Firewall on, stealth mode on.** The Mac doesn't answer probes on closed ports.
 5. **SSH accepts keys only**, and root can't log in. harden.sh refuses to switch password login off
    until your admin account has a key, so it can't lock you out.
