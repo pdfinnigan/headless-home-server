@@ -42,7 +42,7 @@ your devices ─► Tailscale ────────────────�
 
 | Path | What |
 | --- | --- |
-| `config/home-server.example.json` | Copy to `config/home-server.json` and fill in. Identifiers only, never secrets. |
+| `config/home-server.example.json` | Copy to `config/home-server.json` (or `~/.home-server/config.json` to keep it out of the repo) and fill in. Identifiers only, never secrets. |
 | `scripts/harden.sh` | One-time hardening and the service user (sudo) |
 | `scripts/install-helper.sh` | The deploy helper, its sudo rule and the deploy watcher (sudo) |
 | `scripts/setup-server.sh` | The server's own clone with a read-only deploy key |

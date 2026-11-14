@@ -3,7 +3,11 @@
 # shellcheck shell=bash
 
 HS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HS_CONFIG="${HOME_SERVER_CONFIG:-$HS_ROOT/config/home-server.json}"
+# Config: $HOME_SERVER_CONFIG, else config/home-server.json in the repo, else ~/.home-server/config.json
+# (the last keeps it out of the repo, e.g. a symlink into another private repo).
+if [ -n "${HOME_SERVER_CONFIG:-}" ]; then HS_CONFIG="$HOME_SERVER_CONFIG"
+elif [ -f "$HS_ROOT/config/home-server.json" ]; then HS_CONFIG="$HS_ROOT/config/home-server.json"
+else HS_CONFIG="$HOME/.home-server/config.json"; fi
 HS_STATE_DIR=/usr/local/var/home-server         # root-owned; staging, deploy request and status
 HS_HELPER=/usr/local/sbin/home-server-helper    # root-owned; the only thing sudo runs without a password
 HS_LABEL_PREFIX="${HS_LABEL_PREFIX:-local.home-server}"
@@ -14,7 +18,7 @@ warn() { printf '[%s] WARNING: %s\n' "$_tag" "$*" >&2; }
 die() { printf '[%s] ERROR: %s\n' "$_tag" "$*" >&2; exit 1; }
 
 need_config() {
-  [ -f "$HS_CONFIG" ] || die "no config at $HS_CONFIG. Copy config/home-server.example.json there (or set HOME_SERVER_CONFIG) and fill it in."
+  [ -f "$HS_CONFIG" ] || die "no config. Copy config/home-server.example.json to config/home-server.json (or ~/.home-server/config.json) and fill it in."
 }
 
 # cfg <dotted.path> [default]: print one value from the config. Array items are numbers:
