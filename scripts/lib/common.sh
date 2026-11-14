@@ -7,7 +7,11 @@ HS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # (the last keeps it out of the repo, e.g. a symlink into another private repo).
 if [ -n "${HOME_SERVER_CONFIG:-}" ]; then HS_CONFIG="$HOME_SERVER_CONFIG"
 elif [ -f "$HS_ROOT/config/home-server.json" ]; then HS_CONFIG="$HS_ROOT/config/home-server.json"
-else HS_CONFIG="$HOME/.home-server/config.json"; fi
+else
+  _home="$HOME"   # under sudo, use the calling user's home, not root's
+  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then _home="$(eval echo "~$SUDO_USER")"; fi
+  HS_CONFIG="$_home/.home-server/config.json"
+fi
 HS_STATE_DIR=/usr/local/var/home-server         # root-owned; staging, deploy request and status
 HS_HELPER=/usr/local/sbin/home-server-helper    # root-owned; the only thing sudo runs without a password
 HS_LABEL_PREFIX="${HS_LABEL_PREFIX:-local.home-server}"
