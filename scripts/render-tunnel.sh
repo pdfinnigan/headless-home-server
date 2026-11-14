@@ -1,7 +1,7 @@
 #!/bin/bash
 # Print the cloudflared config for every service exposed with auth "public" or "access".
-# Prints nothing when no service needs the tunnel. deploy.sh installs the result through the
-# helper; run it yourself to see what would be installed.
+# Prints nothing when no service needs the tunnel. Exits 3 when one
+# does but the tunnel isn't set up yet. deploy.sh installs the result through the helper; run it yourself to see what would be installed.
 #
 # Access is enforced on each ingress rule (originRequest.access), so a request that didn't pass
 # the Access policy never reaches the service, even if someone finds the hostname.
@@ -40,7 +40,8 @@ for s in $(service_names); do
 done
 
 [ -n "$rules" ] || exit 0
-[[ "$TUNNEL" =~ ^[0-9a-f-]{36}$ ]] || die "a service needs the tunnel, but exposure.tunnelId isn't set (scripts/setup-tunnel.sh)"
+# Exit 3 = "not set up yet", which deploy.sh treats as a warning, not a failure.
+{ [[ "$TUNNEL" =~ ^[0-9a-f-]{36}$ ]] && [ "$TUNNEL" != 00000000-0000-0000-0000-000000000000 ]; } || { warn "a service needs the tunnel, but exposure.tunnelId isn't set (scripts/setup-tunnel.sh)"; exit 3; }
 cat <<EOF
 # Written by headless-home-server scripts/render-tunnel.sh. Edit the config, not this file.
 tunnel: $TUNNEL

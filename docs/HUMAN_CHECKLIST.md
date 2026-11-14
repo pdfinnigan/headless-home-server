@@ -16,7 +16,8 @@ after step 1.
 5. **One sudo paste** (your agent gives you the exact line): `scripts/harden.sh` then
    `scripts/install-helper.sh`. After this, routine deploys never ask for a password.
 6. **If anything is public:** a domain on Cloudflare (free plan is fine). `scripts/setup-tunnel.sh`
-   prints a sign-in URL; open it on any device and pick the domain. It asks for your password once
+   prints a sign-in URL; open it on any device and pick the domain. The link expires after about
+   8 minutes, so have a browser ready; if it lapses, your agent makes a new one. It asks for your password once
    to hand the tunnel's credentials to the service user.
 7. **For each service with `auth: access`:** create a self-hosted Access application for its
    hostname in the Cloudflare Zero Trust dashboard, with a policy (for example, your email), and

@@ -2,6 +2,11 @@
 # Shared helpers. Source it: . "$(dirname "$0")/lib/common.sh"
 # shellcheck shell=bash
 
+# Non-interactive SSH sessions on macOS don't include Homebrew's bin folders; add them.
+case ":$PATH:" in *:/usr/local/bin:*) ;; *) PATH="/usr/local/bin:$PATH" ;; esac
+case ":$PATH:" in *:/opt/homebrew/bin:*) ;; *) [ -d /opt/homebrew/bin ] && PATH="/opt/homebrew/bin:$PATH" ;; esac
+export PATH
+
 HS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Config: $HOME_SERVER_CONFIG, else config/home-server.json in the repo, else ~/.home-server/config.json
 # (the last keeps it out of the repo, e.g. a symlink into another private repo).

@@ -18,6 +18,7 @@ whether each service answers. `--force` redeploys everything.
 - `scripts/home-server-helper` changed: run `sudo scripts/install-helper.sh` once (review the change
   and update `scripts/home-server-helper.sha256` in the same commit).
 - A new public hostname: `scripts/setup-tunnel.sh` once to add its DNS record.
+- A removed public hostname: delete its DNS record in the Cloudflare dashboard.
 
 ## Health
 

@@ -35,4 +35,9 @@ if ! grep -qE '^[[:space:]]*Include[[:space:]]+(~/\.ssh/)?config\.d/\*' ~/.ssh/c
   mv ~/.ssh/config.new ~/.ssh/config; chmod 600 ~/.ssh/config
   say "added 'Include config.d/*' to the top of ~/.ssh/config"
 fi
-say "wrote alias '$ALIAS'. Test: ssh -o BatchMode=yes $ALIAS true"
+# First connection: record the server's host key under the alias (trust on first use, on your LAN).
+if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "$ALIAS" true 2>/dev/null; then
+  say "wrote alias '$ALIAS' and connected; the server's host key is now trusted"
+else
+  warn "wrote alias '$ALIAS', but couldn't connect yet. Is your key on the server (docs/HUMAN_CHECKLIST.md, step 2)?"
+fi

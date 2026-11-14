@@ -3,7 +3,7 @@
 # this repo, read through a read-only deploy key, so deploys can pull without your GitHub login.
 # It doesn't need the rest of the repo yet, so you can pipe it over SSH from your laptop:
 #
-#   ssh -t homeserver 'bash -s' < scripts/setup-server.sh you/my-home-server [~/git/my-home-server] [main]
+#   ssh homeserver 'bash -s' < scripts/setup-server.sh you/my-home-server [~/git/my-home-server] [main]
 #
 # The first run prints a public key. Add it on GitHub as a read-only deploy key (the script
 # prints the link), then run the same command again.

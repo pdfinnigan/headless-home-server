@@ -16,6 +16,10 @@ each hostname. `scripts/deploy.sh` writes the routes (`scripts/render-tunnel.sh`
 restarts cloudflared when they change. Adding a public service is just a config entry plus a deploy;
 run setup-tunnel.sh again only to create the DNS record for a new hostname.
 
+setup-tunnel.sh creates those DNS records for you, but nothing deletes them. When you remove a
+public service or retire the tunnel (`cloudflared tunnel delete <name>`), delete its CNAME in the
+Cloudflare dashboard (DNS > Records) too.
+
 ## Tailscale (private)
 
 Install Tailscale on the server and sign in. deploy.sh runs `tailscale serve` for each `tailscale`

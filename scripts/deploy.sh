@@ -75,7 +75,14 @@ write_status() {  # write_status <running|ok|failed>, read by anything that aske
     tail -n 30 "$RUNLOG"
   } > "$HS_STATE_DIR/status.txt"
 }
-finish() { local rc=$?; if [ "$rc" = 0 ]; then write_status ok; else write_status failed; fi; rmdir "$LOCK"; }
+TMPFILES=()
+finish() {  # reads the exit status first, before anything else can change $?
+  local rc=$?
+  rm -f ${TMPFILES[@]+"${TMPFILES[@]}"} 2>/dev/null   # bash 3.2-safe when empty
+  if [ "$rc" = 0 ]; then write_status ok; else write_status failed; fi
+  rmdir "$LOCK"
+  return "$rc"
+}
 trap finish EXIT
 write_status running
 
@@ -133,8 +140,14 @@ for f in "$STATE"/*.rev; do
 done
 
 # 3. Tunnel routes for services exposed with auth public or access
-tunnel="$(mktemp)"; trap 'rm -f "$tunnel"; finish' EXIT
-"$HS_ROOT/scripts/render-tunnel.sh" > "$tunnel"
+tunnel="$(mktemp)"; TMPFILES+=("$tunnel")
+rc=0; "$HS_ROOT/scripts/render-tunnel.sh" > "$tunnel" || rc=$?
+if [ "$rc" = 3 ]; then
+  warn "tunnel: public services wait until scripts/setup-tunnel.sh has run and exposure.tunnelId is set"
+  : > "$tunnel"
+elif [ "$rc" != 0 ]; then
+  die "tunnel: render-tunnel.sh failed (see above)"
+fi
 if [ -s "$tunnel" ] && ! cmp -s "$tunnel" "$STATE/tunnel.yml"; then
   say "tunnel: routes changed; installing them"
   mkdir -p "$STAGE/tunnel"; cp "$tunnel" "$STAGE/tunnel/config.yml"

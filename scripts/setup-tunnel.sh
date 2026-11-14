@@ -30,21 +30,25 @@ CLOUDFLARED="$(command -v cloudflared || true)"
 # 1. Sign in (once; leaves ~/.cloudflared/cert.pem)
 if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
   say "signing in to Cloudflare. Open the URL below on any device and pick your domain."
-  "$CLOUDFLARED" tunnel login
+  say "The link expires after about 8 minutes. If it does, run this script again for a new one."
+  "$CLOUDFLARED" tunnel login || die "Cloudflare sign-in didn't finish (the link may have expired). Run this script again."
 fi
 
 # 2. Tunnel
-id="$("$CLOUDFLARED" tunnel list -n "$NAME" -o json 2>/dev/null | grep -o '"id":"[0-9a-f-]\{36\}"' | head -1 | cut -d'"' -f4 || true)"
+# The id is the only UUID in the listing; don't depend on cloudflared's JSON spacing.
+tunnel_id() { "$CLOUDFLARED" tunnel list -n "$NAME" -o json 2>/dev/null | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1 || true; }
+id="$(tunnel_id)"
 if [ -z "$id" ]; then
-  "$CLOUDFLARED" tunnel create "$NAME" >/dev/null
-  id="$("$CLOUDFLARED" tunnel list -n "$NAME" -o json | grep -o '"id":"[0-9a-f-]\{36\}"' | head -1 | cut -d'"' -f4)"
+  "$CLOUDFLARED" tunnel create "$NAME" >/dev/null || die "cloudflared couldn't create tunnel $NAME (see above)"
+  id="$(tunnel_id)"
   say "created tunnel $NAME"
 fi
-[ -n "$id" ] || die "couldn't find the tunnel id"
+[ -n "$id" ] || die "tunnel $NAME exists but its id couldn't be read; run: cloudflared tunnel list -n $NAME"
 CREDS="$HOME/.cloudflared/$id.json"
 [ -f "$CREDS" ] || die "no credentials at $CREDS. If the tunnel was made on another machine, copy that file here (it's a secret: scp, never chat or email)."
 
-# 3. DNS for every hostname in the config
+# 3. DNS for every hostname in the config. These CNAME records stay in Cloudflare when a tunnel
+#    or service is removed; delete them in the dashboard (DNS > Records) when you retire one.
 for s in $(service_names); do
   i="$(service_index "$s")"
   auth="$(cfg "services.$i.expose.auth")"
