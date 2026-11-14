@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gateway/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      # The example config must render; it exits 3 ("not set up") because it still has example values.
+      - run: node scripts/render-config.mjs ../config/home-server.example.json || test $? -eq 3
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: for f in scripts/*.sh scripts/home-server-helper scripts/lib/*.sh; do bash -n "$f" || exit 1; done
+      - run: cd scripts && sha256sum -c home-server-helper.sha256
+      - run: for f in services/examples/*/server.js; do node --check "$f" || exit 1; done

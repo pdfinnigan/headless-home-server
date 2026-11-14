@@ -41,7 +41,7 @@ mkdir -p "$STATE"
 cd "$HS_ROOT"
 [ -d .git ] || die "$HS_ROOT is not a git clone. Run scripts/setup-server.sh."
 
-entry() { local i; i="$(service_index "$1")"; printf '%s|%s|%s|%s|%s' "$(cfg "services.$i.dir")" "$(cfg "services.$i.run")" "$(cfg "services.$i.port")" "$(cfg "services.$i.expose.auth")" "$(cfg "services.$i.expose.hostname")"; }
+entry() { local i; i="$(service_index "$1")"; printf '%s|%s|%s|%s|%s|%s' "$(cfg "services.$i.dir")" "$(cfg "services.$i.run")" "$(cfg "services.$i.port")" "$(cfg "services.$i.expose.auth")" "$(cfg "services.$i.expose.hostname")" "$(cfg "services.$i.user" own)"; }
 answers() { curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$1/" 2>/dev/null || true; }
 
 if [ "$MODE" = status ]; then
@@ -114,6 +114,9 @@ for s in $(service_names); do
   dir="$(cfg "services.$i.dir")"; run="$(cfg "services.$i.run")"; port="$(cfg "services.$i.port")"
   [ -d "$dir" ] || die "$s: folder $dir isn't in the repo"
   [ -n "$run" ] && [[ "$port" =~ ^[0-9]+$ ]] || die "$s: needs run and port"
+  isolation="$(cfg "services.$i.user" own)"
+  [ "$isolation" = own ] || [ "$isolation" = shared ] || die "$s: user must be \"own\" or \"shared\""
+  mcp_path=/mcp; [ "$(cfg "services.$i.expose.auth")" = gateway ] && mcp_path="/$s/mcp"
   last_rev="$(cat "$STATE/$s.rev" 2>/dev/null || true)"
   last_entry="$(cat "$STATE/$s.entry" 2>/dev/null || true)"
   if [ "$FORCE" = 0 ] && [ -n "$last_rev" ] && [ "$last_entry" = "$(entry "$s")" ] && git diff --quiet "$last_rev" HEAD -- "$dir" 2>/dev/null; then
@@ -122,7 +125,7 @@ for s in $(service_names); do
   say "$s: deploying $HEAD_REV"
   rm -rf "${STAGE:?}/$s"; mkdir -p "$STAGE/$s/app"
   git archive --format=tar "HEAD:$dir" | tar -xf - -C "$STAGE/$s/app"
-  printf 'RUN=%s\nPORT=%s\n' "$run" "$port" > "$STAGE/$s/service.conf"
+  printf 'RUN=%s\nPORT=%s\nISOLATION=%s\nMCP_PATH=%s\n' "$run" "$port" "$isolation" "$mcp_path" > "$STAGE/$s/service.conf"
   sudo -n "$HS_HELPER" service "$s" || die "$s: the helper failed (see above)"
   echo "$HEAD_REV" > "$STATE/$s.rev"; entry "$s" > "$STATE/$s.entry"
   did=1
@@ -168,5 +171,34 @@ for s in $(service_names); do
     warn "$s: wants Tailscale, which isn't installed (docs/exposure.md)"
   fi
 done
+
+# 5. The OAuth gateway (a Cloudflare Worker) for services exposed with auth "gateway"
+if [ -n "$(cfg gateway.hostname)" ] && [ -d "$HS_ROOT/gateway" ]; then
+  gw="$(mktemp)"; TMPFILES+=("$gw")
+  rc=0; node "$HS_ROOT/gateway/scripts/render-config.mjs" "$HS_CONFIG" > "$gw" || rc=$?
+  if [ "$rc" = 3 ]; then
+    warn "gateway: not set up yet, so MCP services aren't reachable from hosted apps (docs/gateway.md)"
+  elif [ "$rc" != 0 ]; then
+    die "gateway: the config doesn't render (see above)"
+  else
+    tree="$(git rev-parse HEAD:gateway)"
+    if [ "$FORCE" = 1 ] || [ "$tree" != "$(cat "$STATE/gateway.tree" 2>/dev/null)" ] || ! cmp -s "$gw" "$STATE/gateway.jsonc"; then
+      say "gateway: deploying the Worker"
+      build="$STATE/gateway-build"
+      rm -rf "$build"; mkdir -p "$build"
+      git archive --format=tar HEAD:gateway | tar -xf - -C "$build"
+      cp "$gw" "$build/wrangler.jsonc"
+      # A Workers-only API token, if you'd rather not keep wrangler signed in on the server.
+      cf_env="$HOME/.home-server/secrets/cloudflare.env"
+      (
+        cd "$build"
+        if [ -f "$cf_env" ]; then set -a; . "$cf_env"; set +a; fi
+        npm ci --no-audit --no-fund --silent && npx wrangler deploy
+      ) || die "gateway: wrangler deploy failed. Is wrangler signed in on the server (npx wrangler login), or is $cf_env set? (docs/gateway.md)"
+      echo "$tree" > "$STATE/gateway.tree"; cp "$gw" "$STATE/gateway.jsonc"
+      did=1
+    fi
+  fi
+fi
 
 [ "$did" = 1 ] || say "nothing new to deploy at $HEAD_REV"

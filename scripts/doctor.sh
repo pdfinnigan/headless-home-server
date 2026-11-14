@@ -64,7 +64,29 @@ echo "Services"
 for s in $(service_names); do
   i="$(service_index "$s")"; port="$(cfg "services.$i.port")"; auth="$(cfg "services.$i.expose.auth")"
   code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null || true)"
-  [ -n "$code" ] && [ "$code" != 000 ] && ok "$s answers on 127.0.0.1:$port ($auth)" || bad "$s isn't answering on 127.0.0.1:$port (log: ~$SVC/Library/Logs/$s.log)"
+  run_user="$SVC"; [ "$(cfg "services.$i.user" own)" = own ] && run_user="${SVC}_${s//-/_}"
+  [ -n "$code" ] && [ "$code" != 000 ] && ok "$s answers on 127.0.0.1:$port ($auth, runs as $run_user)" || bad "$s isn't answering on 127.0.0.1:$port (log: ~$run_user/Library/Logs/$s.log)"
+  if [ "$auth" = gateway ]; then
+    init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"doctor","version":"1"}}}'
+    mc="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d "$init" "http://127.0.0.1:$port/$s/mcp" 2>/dev/null || true)"
+    [ "$mc" = 200 ] && ok "$s answers MCP initialize at /$s/mcp" || bad "$s doesn't answer MCP at 127.0.0.1:$port/$s/mcp (HTTP ${mc:-none}); it should serve \$MCP_PATH"
+    gh="$(cfg gateway.hostname)"; oh="$(cfg gateway.originHostname)"
+    if [ -n "$gh" ]; then
+      hdr="$(curl -s -o /dev/null -m 8 -D - -X POST "https://$gh/$s" 2>/dev/null | tr -d '\r' | awk 'tolower($1) == "www-authenticate:"')"
+      case "$hdr" in
+        *oauth-protected-resource/$s*) ok "$s is at https://$gh/$s and asks for sign-in" ;;
+        *) bad "$s: https://$gh/$s doesn't ask for OAuth sign-in; is the gateway deployed with this namespace? (docs/gateway.md)" ;;
+      esac
+    fi
+    if [ -n "$oh" ]; then
+      oc="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "https://$oh/$s/mcp" 2>/dev/null || true)"
+      case "$oc" in
+        302|401|403) ok "$s on the origin hostname is locked behind Access (HTTP $oc)" ;;
+        2*|4*) bad "$s answered at https://$oh/$s/mcp without Access (HTTP $oc): anyone could skip the gateway" ;;
+        *) bad "$s isn't reachable through the tunnel (HTTP ${oc:-none}); is cloudflared running?" ;;
+      esac
+    fi
+  fi
   if [ "$auth" = public ] || [ "$auth" = access ]; then
     host="$(cfg "services.$i.expose.hostname")"
     pc="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "https://$host/" 2>/dev/null || true)"
@@ -76,6 +98,26 @@ for s in $(service_names); do
     esac
   fi
 done
+gh="$(cfg gateway.hostname)"
+if [ -n "$gh" ]; then
+  echo "Gateway"
+  stats="$(curl -s -m 8 "https://$gh/stats" 2>/dev/null || true)"
+  if [ -z "$stats" ]; then
+    bad "https://$gh/stats doesn't answer; is the gateway deployed?"
+  else
+    # One line per namespace from the gateway's own end-to-end probe: "name online|offline uptime".
+    lines="$(printf '%s' "$stats" | node -e '
+      let t = ""; process.stdin.on("data", (c) => (t += c)).on("end", () => {
+        try { for (const [n, v] of Object.entries(JSON.parse(t).namespaces ?? {})) console.log(n, v.online ? "online" : "offline", v.uptime_24h ?? "-"); }
+        catch { console.log("? unreadable -"); }
+      });' 2>/dev/null)"
+    while read -r n state up; do
+      [ -n "$n" ] || continue
+      if [ "$state" = online ]; then ok "gateway reaches $n end to end (24 h uptime $up%)"
+      else bad "gateway can't reach $n (24 h uptime $up%)"; fi
+    done <<< "$lines"
+  fi
+fi
 [ -n "$ADMIN" ] && [ -f "$(user_home "$ADMIN")/.home-server/deploy/last-run.log" ] && note "last deploy log: ~$ADMIN/.home-server/deploy/last-run.log"
 
 echo

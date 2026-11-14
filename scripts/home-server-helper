@@ -7,9 +7,13 @@
 #   home-server-helper remove <name>    stop one service and remove its files
 #   home-server-helper tunnel           install the staged tunnel config and (re)start cloudflared
 #
-# What it can do as root is narrow on purpose: copy staged files into the service user's home,
-# run npm ci there AS the service user, and write LaunchDaemons whose UserName is always the
-# service user. So the admin account can make the service user run code, never root.
+# What it can do as root is narrow on purpose: create hidden non-admin service users, copy staged
+# files into a service user's home, run npm ci there AS that user, and write LaunchDaemons whose
+# UserName is always a service user. So the admin account can make service users run code, never root.
+#
+# Each service runs as its own user, <SERVICE_USER>_<name> (dashes become underscores), unless its
+# config entry says "user": "shared", in which case it runs as SERVICE_USER with the tunnel.
+# Its own user means its own home, secrets and data: one service can't read another's.
 # It reads no environment. Its settings come from the root-owned helper.conf.
 set -eu
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
@@ -32,7 +36,36 @@ SVC_HOME="$(dscl . -read "/Users/$SERVICE_USER" NFSHomeDirectory | awk '{print $
 
 find_bin() { for p in /opt/homebrew/bin/$1 /usr/local/bin/$1; do [ -x "$p" ] && { echo "$p"; return 0; }; done; return 1; }
 xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
-as_svc() { sudo -u "$SERVICE_USER" -H env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin "$@"; }
+as_user() { u="$1"; shift; sudo -u "$u" -H env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin "$@"; }
+as_svc() { as_user "$SERVICE_USER" "$@"; }
+home_of() { dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | awk '{print $2}'; }
+
+# own_user <service name>: the name of that service's own account.
+own_user() { printf '%s_%s' "$SERVICE_USER" "$(printf '%s' "$1" | tr - _)"; }
+
+# ensure_user <name>: create a hidden standard account with no password and no login shell,
+# the same way scripts/harden.sh creates SERVICE_USER. Refuses an existing admin.
+ensure_user() {
+  u="$1"
+  printf '%s' "$u" | grep -Eq '^[a-z_][a-z0-9_]{0,62}$' || die "bad user name $u"
+  if id "$u" >/dev/null 2>&1; then
+    dseditgroup -o checkmember -m "$u" admin >/dev/null 2>&1 && die "$u is an admin; refusing to run a service as it"
+    return 0
+  fi
+  uid=""
+  for c in $(seq 401 499); do dscl . -search /Users UniqueID "$c" | grep -q . || { uid="$c"; break; }; done
+  [ -n "$uid" ] || die "no free UID between 401 and 499"
+  dscl . -create "/Users/$u"
+  dscl . -create "/Users/$u" UniqueID "$uid"
+  dscl . -create "/Users/$u" PrimaryGroupID 20
+  dscl . -create "/Users/$u" UserShell /usr/bin/false
+  dscl . -create "/Users/$u" RealName "Home server service"
+  dscl . -create "/Users/$u" NFSHomeDirectory "/Users/$u"
+  dscl . -create "/Users/$u" IsHidden 1
+  dscl . -create "/Users/$u" Password '*'
+  createhomedir -c -u "$u" >/dev/null
+  echo "home-server-helper: created hidden service user $u (uid $uid)"
+}
 
 load_daemon() {  # load_daemon <label> <rendered plist>
   dst="/Library/LaunchDaemons/$1.plist"
@@ -54,21 +87,31 @@ service)
   [ -z "$(find "$SRC" -type l)" ] || die "staged files contain a symlink"
   RUN="$(sed -n 's/^RUN=//p' "$SRC/service.conf" | head -1)"
   PORT="$(sed -n 's/^PORT=\([0-9][0-9]*\)$/\1/p' "$SRC/service.conf" | head -1)"
+  ISOLATION="$(grep -E '^ISOLATION=(own|shared)$' "$SRC/service.conf" | head -1 | cut -d= -f2)"
+  MCP_PATH="$(grep -E '^MCP_PATH=/[a-z0-9][a-z0-9-]*/mcp$' "$SRC/service.conf" | head -1 | cut -d= -f2)"
   [ -n "$RUN" ] || die "RUN missing"
   [ -n "$PORT" ] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || die "PORT must be 1024-65535"
+  if [ "$ISOLATION" = shared ]; then RUN_USER="$SERVICE_USER"; else RUN_USER="$(own_user "$name")"; ensure_user "$RUN_USER"; fi
+  RUN_HOME="$(home_of "$RUN_USER")"
+  [ -d "$RUN_HOME" ] && [ ! -L "$RUN_HOME" ] || die "$RUN_USER's home is missing"
 
   TMP="$(mktemp -d /var/tmp/home-server-helper.XXXXXX)"
   trap 'rm -rf "$TMP"' EXIT
   cp -R "$SRC/app" "$TMP/app"
-  chown -R "$SERVICE_USER" "$TMP/app"
+  chown -R "$RUN_USER" "$TMP/app"
   if [ -f "$TMP/app/package-lock.json" ]; then
     NPM="$(find_bin npm)" || die "this service has a package-lock.json but npm wasn't found"
-    (cd "$TMP/app" && as_svc "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-fund --silent) \
+    (cd "$TMP/app" && as_user "$RUN_USER" "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-fund --silent) \
       || die "npm ci failed; the running copy is unchanged"
   fi
 
-  install -d -o "$SERVICE_USER" -m 755 "$SVC_HOME/services" "$SVC_HOME/Library/Logs"
-  DST="$SVC_HOME/services/$name"
+  install -d -o "$RUN_USER" -m 755 "$RUN_HOME/services" "$RUN_HOME/Library/Logs"
+  install -d -o "$RUN_USER" -m 700 "$RUN_HOME/secrets" "$RUN_HOME/data"
+  # A service that moved between its own user and the shared one: stop the old copy first.
+  for h in "$SVC_HOME" "$(home_of "$(own_user "$name")")"; do
+    if [ -n "$h" ] && [ "$h" != "$RUN_HOME" ] && [ -d "$h/services/$name" ] && [ ! -L "$h/services/$name" ]; then rm -rf "$h/services/$name"; fi
+  done
+  DST="$RUN_HOME/services/$name"
   [ ! -L "$DST" ] || die "$DST is a symlink"
   rm -rf "$DST.old"
   [ -d "$DST" ] && mv -h "$DST" "$DST.old"
@@ -82,27 +125,28 @@ service)
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
-  <key>UserName</key><string>$SERVICE_USER</string>
+  <key>UserName</key><string>$RUN_USER</string>
   <key>WorkingDirectory</key><string>$(xml "$DST")</string>
   <key>ProgramArguments</key>
   <array><string>/bin/sh</string><string>-c</string><string>exec $(xml "$RUN")</string></array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>$(xml "$SVC_HOME")</string>
+    <key>HOME</key><string>$(xml "$RUN_HOME")</string>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
     <key>HOST</key><string>127.0.0.1</string>
     <key>PORT</key><string>$PORT</string>
+    <key>MCP_PATH</key><string>${MCP_PATH:-/mcp}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$(xml "$SVC_HOME/Library/Logs/$name.log")</string>
-  <key>StandardErrorPath</key><string>$(xml "$SVC_HOME/Library/Logs/$name.log")</string>
+  <key>StandardOutPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.log")</string>
+  <key>StandardErrorPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.log")</string>
 </dict>
 </plist>
 EOF
   load_daemon "$LABEL" "$TMP/plist"
-  echo "home-server-helper: $name is running as $SERVICE_USER on 127.0.0.1:$PORT"
+  echo "home-server-helper: $name is running as $RUN_USER on 127.0.0.1:$PORT"
   ;;
 
 remove)
@@ -111,7 +155,10 @@ remove)
   launchctl bootout "system/$LABEL" >/dev/null 2>&1 || true
   rm -f "/Library/LaunchDaemons/$LABEL.plist"
   [ -L "$SVC_HOME/services/$name" ] || rm -rf "$SVC_HOME/services/$name"
-  echo "home-server-helper: removed $name"
+  OWN_HOME="$(home_of "$(own_user "$name")")"
+  if [ -n "$OWN_HOME" ] && [ -d "$OWN_HOME/services/$name" ] && [ ! -L "$OWN_HOME/services/$name" ]; then rm -rf "$OWN_HOME/services/$name"; fi
+  # The service's user, its secrets and data stay, so adding it back finds them again.
+  echo "home-server-helper: removed $name (its user, secrets and data are kept)"
   ;;
 
 tunnel)

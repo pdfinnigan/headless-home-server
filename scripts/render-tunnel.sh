@@ -1,5 +1,7 @@
 #!/bin/bash
-# Print the cloudflared config for every service exposed with auth "public" or "access".
+# Print the cloudflared config for every service exposed with auth "public", "access" or "gateway".
+# A "gateway" service is reached at https://<gateway.originHostname>/<name>/..., always behind the
+# Access app the gateway's service token belongs to, so only the gateway can reach it.
 # Prints nothing when no service needs the tunnel. Exits 3 when one
 # does but the tunnel isn't set up yet. deploy.sh installs the result through the helper; run it yourself to see what would be installed.
 #
@@ -19,8 +21,27 @@ rules=""
 for s in $(service_names); do
   i="$(service_index "$s")"
   auth="$(cfg "services.$i.expose.auth")"
-  [ "$auth" = public ] || [ "$auth" = access ] || continue
-  host="$(cfg "services.$i.expose.hostname")"; port="$(cfg "services.$i.port")"
+  [ "$auth" = public ] || [ "$auth" = access ] || [ "$auth" = gateway ] || continue
+  port="$(cfg "services.$i.port")"
+  if [ "$auth" = gateway ]; then
+    host="$(cfg gateway.originHostname)"
+    aud="$(cfg gateway.originAccessAud)"
+    [[ "$host" =~ ^[a-z0-9.-]+$ ]] || die "$s: auth gateway needs gateway.originHostname"
+    [[ "$aud" =~ ^[0-9a-f]{64}$ ]] || die "$s: auth gateway needs gateway.originAccessAud (the origin Access app's 64-hex Audience tag)"
+    [[ "$TEAM" =~ ^[a-z0-9-]+$ ]] || die "$s: auth gateway needs exposure.accessTeam"
+    rules+="  - hostname: $host
+    path: ^/$s(/|\$)
+    service: http://127.0.0.1:$port
+    originRequest:
+      access:
+        required: true
+        teamName: $TEAM
+        audTag:
+          - $aud
+"
+    continue
+  fi
+  host="$(cfg "services.$i.expose.hostname")"
   [[ "$host" =~ ^[a-z0-9.-]+$ ]] || die "$s: expose.hostname '$host' doesn't look like a hostname"
   rules+="  - hostname: $host
     service: http://127.0.0.1:$port
