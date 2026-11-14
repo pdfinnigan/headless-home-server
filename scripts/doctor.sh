@@ -60,17 +60,33 @@ lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 {print $1, $3, $9}' | sort
   esac
 done
 
+# The gateway checks only mean something once it's set up (render-config exits 3 until then).
+gw_ready=0
+if [ -n "$(cfg gateway.hostname)" ]; then
+  rc=0; node "$HS_ROOT/gateway/scripts/render-config.mjs" "$HS_CONFIG" >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 3 ] || gw_ready=1
+fi
+
 echo "Services"
 for s in $(service_names); do
   i="$(service_index "$s")"; port="$(cfg "services.$i.port")"; auth="$(cfg "services.$i.expose.auth")"
   code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null || true)"
   run_user="$SVC"; [ "$(cfg "services.$i.user" own)" = own ] && run_user="${SVC}_${s//-/_}"
   [ -n "$code" ] && [ "$code" != 000 ] && ok "$s answers on 127.0.0.1:$port ($auth, runs as $run_user)" || bad "$s isn't answering on 127.0.0.1:$port (log: ~$run_user/Library/Logs/$s.log)"
+  if id "$run_user" >/dev/null 2>&1; then
+    dseditgroup -o checkmember -m "$run_user" admin >/dev/null 2>&1 && bad "$s runs as $run_user, which is an admin"
+    [ "$(id -g "$run_user")" = 20 ] && bad "$s: $run_user is in the staff group, so it can read other homes (redeploy it: scripts/deploy.sh --force)"
+    h="$(user_home "$run_user")"; m="$(stat -f %Lp "$h" 2>/dev/null)"
+    [ -z "$m" ] || [ "$m" = 700 ] || bad "$s: $run_user's home $h is mode $m, not 700, so other accounts can look in (redeploy it)"
+  fi
   if [ "$auth" = gateway ]; then
     init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"doctor","version":"1"}}}'
     mc="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d "$init" "http://127.0.0.1:$port/$s/mcp" 2>/dev/null || true)"
     [ "$mc" = 200 ] && ok "$s answers MCP initialize at /$s/mcp" || bad "$s doesn't answer MCP at 127.0.0.1:$port/$s/mcp (HTTP ${mc:-none}); it should serve \$MCP_PATH"
     gh="$(cfg gateway.hostname)"; oh="$(cfg gateway.originHostname)"
+    if [ "$gw_ready" = 0 ]; then
+      note "$s: the gateway isn't set up yet, so hosted apps can't reach it (docs/gateway.md)"; continue
+    fi
     if [ -n "$gh" ]; then
       hdr="$(curl -s -o /dev/null -m 8 -D - -X POST "https://$gh/$s" 2>/dev/null | tr -d '\r' | awk 'tolower($1) == "www-authenticate:"')"
       case "$hdr" in
@@ -99,7 +115,7 @@ for s in $(service_names); do
   fi
 done
 gh="$(cfg gateway.hostname)"
-if [ -n "$gh" ]; then
+if [ -n "$gh" ] && [ "$gw_ready" = 1 ]; then
   echo "Gateway"
   stats="$(curl -s -m 8 "https://$gh/stats" 2>/dev/null || true)"
   if [ -z "$stats" ]; then
