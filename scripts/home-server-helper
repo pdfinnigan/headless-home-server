@@ -114,6 +114,8 @@ service)
 
   TMP="$(mktemp -d /var/tmp/home-server-helper.XXXXXX)"
   trap 'rm -rf "$TMP"' EXIT
+  # mktemp makes it 700 root; the service user must be able to pass through it to run npm ci in app/.
+  chmod 711 "$TMP"
   cp -R "$SRC/app" "$TMP/app"
   chown -R "$RUN_USER" "$TMP/app"
   if [ -f "$TMP/app/package-lock.json" ]; then
