@@ -6,6 +6,7 @@ Each service picks one `expose.auth` in the config. You can mix them.
 | --- | --- | --- |
 | `public` | Anyone on the internet, at `https://<hostname>` | A domain on Cloudflare and the tunnel. The service does its own auth, if any. |
 | `access` | People who pass a Cloudflare Access policy (email code, Google, GitHub, service token) | As above, plus an Access application for the hostname |
+| `gateway` | MCP clients signed in through the OAuth gateway: claude.ai, ChatGPT, bearer-token clients | The gateway (docs/gateway.md) and an `mcp` block on the service |
 | `tailscale` | Devices on your tailnet | Tailscale installed and signed in on the server |
 | `local` | Only the server itself | Nothing. Reach it with `ssh -L 8080:127.0.0.1:8080 homeserver`. |
 
@@ -27,10 +28,10 @@ service, so it's at `https://<machine>.<tailnet>.ts.net:<port>` from your device
 
 ## MCP servers for Claude, ChatGPT and other apps
 
-Hosted AI apps connect to remote MCP servers over OAuth. Cloudflare Access protects a hostname, but
-it isn't an OAuth server those apps can sign in to. Your options:
+Hosted AI apps connect to remote MCP servers over OAuth, which Cloudflare Access alone isn't. Give
+the service `"auth": "gateway"` and an `mcp` block, and the gateway in `gateway/` publishes it at
+`https://<gateway.hostname>/<name>` with GitHub sign-in, its own token audience, its own list of
+allowed apps and its own tool allowlist. Each MCP server you add this way is a separate namespace.
+docs/gateway.md has the setup and the details.
 
-- Clients you run yourself (Claude Code, Codex, scripts): `tailscale`, or `access` with a service token.
-- Hosted apps (claude.ai, ChatGPT): put an OAuth gateway in front, such as a Cloudflare Worker using
-  `workers-oauth-provider`, that signs you in with GitHub and forwards to the tunnel with an Access
-  service token. An optional gateway is planned for `gateway/`.
+Clients you run yourself can also use `tailscale` directly, with no gateway.

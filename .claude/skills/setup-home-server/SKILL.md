@@ -56,6 +56,8 @@ missing or a tool isn't installed, give them the one install command to paste on
   Put the id in `exposure.tunnelId`, commit, push.
 - Anything `access`: checklist 7, then put the AUD tag in that service's `expose.accessAud`.
 - Anything `tailscale`: ask them to install Tailscale on the server and sign in.
+- Anything `gateway` (MCP for hosted apps): follow docs/gateway.md, "Set it up". Do steps 2 and 5
+  yourself; ask for 1, 3, 4 and 6 one at a time (checklist 9).
 
 ## 5. First deploy and check
 

@@ -70,6 +70,7 @@ cat > "$tmp" <<EOF
     <key>HOME</key><string>$ADMIN_HOME</string>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME_SERVER_CONFIG</key><string>$HS_CONFIG</string>
+    <key>HS_TRIGGER</key><string>watch</string>
   </dict>
   <key>RunAtLoad</key><false/>
   <key>WatchPaths</key><array><string>$HS_STATE_DIR/request</string></array>
@@ -81,5 +82,9 @@ EOF
 plutil -lint "$tmp" >/dev/null || die "rendered watcher plist is invalid: $tmp"
 install -o root -g wheel -m 644 "$tmp" "$WATCH_PLIST"; rm -f "$tmp"
 launchctl bootout "system/$WATCH_LABEL" >/dev/null 2>&1 || true
+# launchd fires a WatchPaths job when it loads it. Mark the current request as handled, so that
+# first run exits without deploying anything (deploy.sh compares the two).
+sudo -u "$ADMIN" mkdir -p "$ADMIN_HOME/.home-server/deploy"
+sudo -u "$ADMIN" touch "$ADMIN_HOME/.home-server/deploy/request.seen"
 launchctl bootstrap system "$WATCH_PLIST"
 say "deploy watcher installed: touch $HS_STATE_DIR/request to deploy"

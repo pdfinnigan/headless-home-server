@@ -15,27 +15,74 @@
     "tunnelId": "00000000-0000-0000-0000-000000000000",
     "accessTeam": "your-team"
   },
+  "gateway": {
+    "hostname": "mcp.example.com",
+    "originHostname": "origin.example.com",
+    "originAccessAud": "0000000000000000000000000000000000000000000000000000000000000000",
+    "kvNamespaceId": "00000000000000000000000000000000",
+    "allowedGithubId": "0",
+    "bearerClients": {
+      "laptop": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
   "services": [
     {
       "name": "site",
       "dir": "services/examples/static-site",
       "run": "node server.js",
       "port": 8080,
-      "expose": { "hostname": "www.example.com", "auth": "public" }
+      "expose": {
+        "hostname": "www.example.com",
+        "auth": "public"
+      }
     },
     {
       "name": "api",
       "dir": "services/examples/http-api",
       "run": "node server.js",
       "port": 8081,
-      "expose": { "hostname": "api.example.com", "auth": "access", "accessAud": "0000000000000000000000000000000000000000000000000000000000000000" }
+      "expose": {
+        "hostname": "api.example.com",
+        "auth": "access",
+        "accessAud": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
     },
     {
-      "name": "mcp",
+      "name": "status",
       "dir": "services/examples/mcp-server",
       "run": "node server.js",
       "port": 8765,
-      "expose": { "auth": "tailscale" }
+      "expose": {
+        "auth": "gateway"
+      },
+      "mcp": {
+        "tools": [
+          "server_status"
+        ],
+        "clients": [
+          "oauth:claude",
+          "oauth:chatgpt",
+          "bearer:laptop"
+        ]
+      }
+    },
+    {
+      "name": "notes",
+      "dir": "services/examples/mcp-notes",
+      "run": "node server.js",
+      "port": 8766,
+      "expose": {
+        "auth": "gateway"
+      },
+      "mcp": {
+        "tools": [
+          "notes_add",
+          "notes_list"
+        ],
+        "clients": [
+          "oauth:claude"
+        ]
+      }
     }
   ]
 }

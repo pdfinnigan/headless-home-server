@@ -2,13 +2,15 @@
 // easy to read. It has one tool, `server_status`. For a real server, the official SDK
 // (@modelcontextprotocol/sdk) handles sessions and streaming for you.
 //
-// Expose it with auth "tailscale" or "local" for clients you run yourself. Claude.ai and ChatGPT
-// connectors need OAuth in front of it, which Cloudflare Access alone doesn't provide (docs/exposure.md).
+// Expose it with auth "gateway" to reach it from claude.ai, ChatGPT and your other AI apps through
+// the OAuth gateway (docs/gateway.md), or "tailscale"/"local" for clients you run yourself.
+// It serves MCP at $MCP_PATH: /<service name>/mcp behind the gateway, /mcp otherwise.
 import { createServer } from "node:http";
 import { hostname, loadavg, uptime } from "node:os";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 8765);
+const mcpPath = process.env.MCP_PATH ?? "/mcp";
 const PROTOCOL = "2025-06-18";
 
 const tools = {
@@ -40,7 +42,9 @@ function handle(msg) {
 }
 
 createServer((req, res) => {
-	if (req.method !== "POST" || new URL(req.url, "http://x").pathname !== "/mcp") {
+	const path = new URL(req.url, "http://x").pathname;
+	if (path === "/" && req.method === "GET") return res.writeHead(200).end("ok\n"); // health check
+	if (req.method !== "POST" || path !== mcpPath) {
 		return res.writeHead(req.method === "GET" ? 405 : 404, { Allow: "POST" }).end();
 	}
 	let raw = "";
@@ -57,4 +61,4 @@ createServer((req, res) => {
 		}
 		res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(reply));
 	});
-}).listen(port, host, () => console.log(`mcp-server on http://${host}:${port}/mcp`));
+}).listen(port, host, () => console.log(`mcp-server on http://${host}:${port}${mcpPath}`));

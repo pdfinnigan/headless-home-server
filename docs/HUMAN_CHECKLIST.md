@@ -24,3 +24,7 @@ after step 1.
    give your agent its Audience (AUD) tag. That tag is an identifier, not a secret.
 8. **Secrets a service needs** (API keys, passwords): put them in the service user's files
    yourself, from Terminal, never in chat or in the repo. See docs/security.md, "Secrets".
+9. **If you want MCP servers in claude.ai or ChatGPT** (docs/gateway.md): sign wrangler in on the
+   server once, create a GitHub OAuth app and an Access service token with its Access app (two
+   dashboard forms), then run `scripts/gateway-secrets.sh` on the server and paste the four values
+   it asks for. Then add each namespace's URL as a connector in your apps.

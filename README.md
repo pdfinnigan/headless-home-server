@@ -8,13 +8,16 @@ It's built to be set up and run by a coding agent (Claude Code, Codex, Cursor an
 a handful of things only a person can do (docs/HUMAN_CHECKLIST.md); the agent does the rest.
 
 ```
-                     ┌──────────── your Mac at home ────────────────────────────┐
-internet ─► Cloudflare ─► tunnel (outbound) ─► 127.0.0.1:8080  site        public
-              Access   ─►                   ─► 127.0.0.1:8081  api         behind a login
-your devices ─► Tailscale ─────────────────► 127.0.0.1:8765  mcp          private
-                     │   every service runs as a hidden non-admin user,         │
-                     │   starts at boot, restarts if it dies                    │
-                     └──────────────────────────────────────────────────────────┘
+                          ┌──────────── your Mac at home ──────────────────────────────┐
+internet ─► Cloudflare ─► tunnel (outbound) ─► 127.0.0.1:8080  site           public
+              Access   ─►                   ─► 127.0.0.1:8081  api            behind a login
+claude.ai, ─► MCP gateway ─► /status ──────── ─► 127.0.0.1:8765  status (MCP)   one sign-in,
+ChatGPT,      (OAuth)    ─► /notes ───────── ─► 127.0.0.1:8766  notes  (MCP)   per-namespace access
+Claude Code
+your devices ─► Tailscale ─────────────────────► any service                    private
+                          │  each service runs as its own hidden non-admin user,      │
+                          │  starts at boot, restarts if it dies                      │
+                          └───────────────────────────────────────────────────────────┘
 ```
 
 ## Start
@@ -30,11 +33,15 @@ your devices ─► Tailscale ────────────────�
 
 - **Headless:** never sleeps, starts every service at boot, recovers from power loss where the
   hardware allows ([docs/headless.md](docs/headless.md)).
-- **Safe by default:** firewall and stealth mode, SSH keys only, services on localhost as a non-admin
-  user, one narrow passwordless sudo rule, and a doctor that checks it all
+- **Safe by default:** firewall and stealth mode, SSH keys only, services on localhost each as
+  its own non-admin user, one narrow passwordless sudo rule, and a doctor that checks it all
   ([docs/security.md](docs/security.md)).
 - **Exposure per service:** Cloudflare Tunnel (public or behind Access), Tailscale, or local only
   ([docs/exposure.md](docs/exposure.md)).
+- **Many MCP servers, one sign-in:** an OAuth gateway puts each MCP server at its own URL for
+  claude.ai, ChatGPT, Claude Code and Codex, with its own token, allowed apps and tools, and a
+  health probe and usage log for all of them ([docs/gateway.md](docs/gateway.md)). Adding one is
+  a config entry and a deploy.
 - **Deploy on merge or on request:** `scripts/deploy.sh` ships only what changed; touching one file
   triggers it, so an agent or a service can deploy without SSH ([docs/operate.md](docs/operate.md)).
 
@@ -49,8 +56,10 @@ your devices ─► Tailscale ────────────────�
 | `scripts/setup-tunnel.sh` | Cloudflare Tunnel and DNS |
 | `scripts/deploy.sh` | Deploy, from the server or your laptop |
 | `scripts/doctor.sh` | Read-only health and security check |
+| `scripts/gateway-secrets.sh` | Puts the gateway's secrets into Cloudflare, typed by you |
+| `gateway/` | The OAuth gateway Worker for MCP namespaces, configured from your config |
 | `scripts/check-no-personal.sh` | Scans for personal info before you share a copy |
-| `services/examples/` | A static site, a JSON API and a minimal MCP server |
+| `services/examples/` | A static site, a JSON API and two small MCP servers |
 
 ## Requirements
 

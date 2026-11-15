@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-time, on the server, as the admin user (not sudo). Creates the Cloudflare Tunnel that
-# carries every public or Access-protected service, and hands its credentials to the service user.
+# carries every public, Access-protected or gateway service, and hands its credentials to the service user.
 # Needs: a domain on Cloudflare, and cloudflared (brew install cloudflared).
 #
 #   scripts/setup-tunnel.sh [tunnel-name]     default name: home-server
@@ -57,6 +57,11 @@ for s in $(service_names); do
   "$CLOUDFLARED" tunnel route dns "$NAME" "$host" >/dev/null 2>&1 \
     && say "DNS: $host -> tunnel $NAME" || warn "DNS for $host wasn't changed (it may already point somewhere else)"
 done
+oh="$(cfg gateway.originHostname)"
+if [ -n "$oh" ]; then
+  "$CLOUDFLARED" tunnel route dns "$NAME" "$oh" >/dev/null 2>&1 \
+    && say "DNS: $oh -> tunnel $NAME (the gateway's way in)" || warn "DNS for $oh wasn't changed (it may already point somewhere else)"
+fi
 
 # 4. Credentials to the service user (a secret: readable only by that user)
 if ! sudo -n test -f "$SVC_HOME/.cloudflared/$id.json" 2>/dev/null; then

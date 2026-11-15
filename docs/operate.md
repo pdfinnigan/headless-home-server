@@ -9,7 +9,8 @@ Merge to your branch, then any of:
   as the service user (for example, an MCP tool your agent can call)
 
 deploy.sh pulls, redeploys only services whose folder or config entry changed, removes services
-that left the config, and updates the tunnel routes. The result goes to
+that left the config, updates the tunnel routes, and redeploys the gateway Worker when `gateway/`
+or the namespaces changed. The result goes to
 `/usr/local/var/home-server/status.txt`. `scripts/deploy.sh status` shows what's deployed and
 whether each service answers. `--force` redeploys everything.
 
@@ -17,17 +18,27 @@ whether each service answers. `--force` redeploys everything.
 
 - `scripts/home-server-helper` changed: run `sudo scripts/install-helper.sh` once (review the change
   and update `scripts/home-server-helper.sha256` in the same commit).
-- A new public hostname: `scripts/setup-tunnel.sh` once to add its DNS record.
+- A new public hostname: `scripts/setup-tunnel.sh` once to add its DNS record. (New MCP
+  namespaces need nothing: they share the gateway's hostnames.)
+- A new MCP namespace: add it as a connector in each app that should have it.
 - A removed public hostname: delete its DNS record in the Cloudflare dashboard.
 
 ## Health
 
 `scripts/doctor.sh` checks sleep, firewall, SSH, the helper, open ports, and every service locally
-and through its public hostname. It exits with the number of failures.
+and through its public hostname. For MCP namespaces it also checks that the gateway asks for
+sign-in, that the origin refuses requests without Access, and the gateway's own end-to-end probe.
+It exits with the number of failures.
+
+`https://<gateway.hostname>/stats` shows each namespace's state and 24-hour uptime from a probe
+every 5 minutes; `/usage` (GitHub sign-in) shows calls and errors per app and tool.
 
 ## Logs
 
-- Services and tunnel: `sudo tail -f ~svc/Library/Logs/<service>.log` (or `cloudflared.log`)
+- Services: `sudo tail -f ~svc_<service>/Library/Logs/<service>.log` (dashes in the name become
+  underscores in the user; `~svc/...` for `"user": "shared"` services)
+- Tunnel: `sudo tail -f ~svc/Library/Logs/cloudflared.log`
+- Gateway: Cloudflare dashboard > Workers > the gateway > Observability
 - Deploys: `~/.home-server/deploy/last-run.log` and `~/Library/Logs/home-server-deploy.log`
 
 ## Reaching it

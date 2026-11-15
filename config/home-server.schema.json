@@ -3,54 +3,220 @@
   "title": "headless-home-server config",
   "description": "Identifiers and choices only. Secrets (tunnel credentials, API keys, passwords) never go in this file.",
   "type": "object",
-  "required": ["server", "services"],
+  "required": [
+    "server",
+    "services"
+  ],
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
     "server": {
       "type": "object",
-      "required": ["adminUser", "serviceUser", "repoPath"],
+      "required": [
+        "adminUser",
+        "serviceUser",
+        "repoPath"
+      ],
       "properties": {
-        "name": { "type": "string", "description": "Friendly name, used in messages." },
-        "adminUser": { "type": "string", "description": "The macOS admin account you log in with. Deploys run as this user." },
-        "serviceUser": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,30}$", "description": "Hidden non-admin account that runs every service and the tunnel." },
-        "lanIp": { "type": "string", "description": "The server's LAN address, for the SSH alias. Reserve it on your router." },
-        "sshAlias": { "type": "string", "default": "homeserver" },
-        "repoPath": { "type": "string", "description": "Where your clone lives on the server, e.g. ~/git/my-home-server." },
-        "branch": { "type": "string", "default": "main" }
+        "name": {
+          "type": "string",
+          "description": "Friendly name, used in messages."
+        },
+        "adminUser": {
+          "type": "string",
+          "description": "The macOS admin account you log in with. Deploys run as this user."
+        },
+        "serviceUser": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]{0,30}$",
+          "description": "Hidden non-admin account that runs every service and the tunnel."
+        },
+        "lanIp": {
+          "type": "string",
+          "description": "The server's LAN address, for the SSH alias. Reserve it on your router."
+        },
+        "sshAlias": {
+          "type": "string",
+          "default": "homeserver"
+        },
+        "repoPath": {
+          "type": "string",
+          "description": "Where your clone lives on the server, e.g. ~/git/my-home-server."
+        },
+        "branch": {
+          "type": "string",
+          "default": "main"
+        }
       }
     },
     "exposure": {
       "type": "object",
       "description": "Needed only when a service uses auth public or access.",
       "properties": {
-        "provider": { "enum": ["cloudflare"] },
-        "domain": { "type": "string" },
-        "tunnelId": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
-        "accessTeam": { "type": "string", "description": "Cloudflare Zero Trust team name, for services with auth access." }
+        "provider": {
+          "enum": [
+            "cloudflare"
+          ]
+        },
+        "domain": {
+          "type": "string"
+        },
+        "tunnelId": {
+          "type": "string",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
+        "accessTeam": {
+          "type": "string",
+          "description": "Cloudflare Zero Trust team name, for services with auth access."
+        }
       }
     },
     "services": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "dir", "run", "port", "expose"],
+        "required": [
+          "name",
+          "dir",
+          "run",
+          "port",
+          "expose"
+        ],
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
-          "dir": { "type": "string", "description": "Folder in this repo that holds the service. It is copied to the service user's home on deploy." },
-          "run": { "type": "string", "description": "Command started inside that folder, as the service user. It gets PORT and HOST=127.0.0.1." },
-          "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+          },
+          "dir": {
+            "type": "string",
+            "description": "Folder in this repo that holds the service. It is copied to the service user's home on deploy."
+          },
+          "run": {
+            "type": "string",
+            "description": "Command started inside that folder, as the service user. It gets PORT and HOST=127.0.0.1."
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 65535
+          },
           "expose": {
             "type": "object",
-            "required": ["auth"],
+            "required": [
+              "auth"
+            ],
             "properties": {
               "auth": {
-                "enum": ["public", "access", "tailscale", "local"],
-                "description": "public: anyone on the internet via the tunnel (the service does its own auth). access: via the tunnel, behind a Cloudflare Access policy. tailscale: only your tailnet. local: only this machine (reach it over SSH)."
+                "enum": [
+                  "public",
+                  "access",
+                  "gateway",
+                  "tailscale",
+                  "local"
+                ],
+                "description": "public: anyone on the internet via the tunnel (the service does its own auth). access: via the tunnel, behind a Cloudflare Access policy. gateway: an MCP server behind the OAuth gateway (needs an mcp block). tailscale: only your tailnet. local: only this machine (reach it over SSH)."
               },
-              "hostname": { "type": "string", "description": "Public hostname, for public and access." },
-              "accessAud": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Application Audience tag of the Access app, for access." }
+              "hostname": {
+                "type": "string",
+                "description": "Public hostname, for public and access."
+              },
+              "accessAud": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "Application Audience tag of the Access app, for access."
+              }
+            }
+          },
+          "user": {
+            "enum": [
+              "own",
+              "shared"
+            ],
+            "default": "own",
+            "description": "own: the service runs as its own hidden user (<serviceUser>_<name>) with its own home, secrets and data. shared: it runs as serviceUser, like the tunnel."
+          },
+          "mcp": {
+            "type": "object",
+            "required": [
+              "tools",
+              "clients"
+            ],
+            "description": "Publish this service as an MCP namespace through the gateway, at https://<gateway.hostname>/<name>. Needs expose.auth gateway.",
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The only tools the gateway lists and lets through. Anything else the server offers stays hidden."
+              },
+              "clients": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^(oauth:(claude|chatgpt)|bearer:[a-z0-9][a-z0-9-]*)$"
+                },
+                "description": "Who may use it: oauth:claude (Claude's apps), oauth:chatgpt, bearer:<name>. Nobody else."
+              }
             }
           }
+        }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "description": "The OAuth gateway (a Cloudflare Worker in gateway/) that puts every service with an mcp block at https://<hostname>/<service name>, for claude.ai, ChatGPT and bearer-token clients. docs/gateway.md.",
+      "required": [
+        "hostname",
+        "originHostname",
+        "originAccessAud",
+        "kvNamespaceId",
+        "allowedGithubId"
+      ],
+      "properties": {
+        "hostname": {
+          "type": "string",
+          "description": "Where AI apps connect, e.g. mcp.example.com. The Worker gets it as a custom domain."
+        },
+        "originHostname": {
+          "type": "string",
+          "description": "The tunnel hostname only the gateway uses, e.g. origin.example.com. Each MCP service is at /<name>/ on it, behind Access."
+        },
+        "originAccessAud": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Audience tag of the Access app for originHostname, whose policy allows only the gateway's service token."
+        },
+        "kvNamespaceId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "KV namespace for OAuth state: npx wrangler kv namespace create OAUTH_KV"
+        },
+        "allowedGithubId": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "The one GitHub account (numeric id) allowed to sign in."
+        },
+        "workerName": {
+          "type": "string",
+          "default": "home-server-gateway"
+        },
+        "usageDatabase": {
+          "description": "D1 database name for the usage log and health history (created on first deploy), or false for none.",
+          "default": "home-server-usage"
+        },
+        "bearerClients": {
+          "type": "object",
+          "description": "Clients that use a static token instead of OAuth (Claude Code, Codex, scripts): { name: sha256 hex of the token }. List them as bearer:<name> in a service's mcp.clients.",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "extraNamespaces": {
+          "type": "object",
+          "description": "Advanced: namespaces that aren't services, e.g. an older URL kept working during a migration. { name: { path, origin, tools, clients } }"
         }
       }
     }
