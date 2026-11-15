@@ -77,6 +77,7 @@ write_status() {  # write_status <running|ok|failed>, read by anything that aske
     echo "started: $DEPLOY_STARTED"
     [ "$1" = running ] || echo "finished: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "commit: $(git rev-parse --short HEAD)"
+    if [ -s "$STATE/history.log" ]; then echo "--- recent deploys"; tail -n 10 "$STATE/history.log"; fi
     echo "--- last output"
     tail -n 30 "$RUNLOG"
   } > "$HS_STATE_DIR/status.txt"
@@ -85,7 +86,11 @@ TMPFILES=()
 finish() {  # reads the exit status first, before anything else can change $?
   local rc=$?
   rm -f ${TMPFILES[@]+"${TMPFILES[@]}"} 2>/dev/null   # bash 3.2-safe when empty
-  if [ "$rc" = 0 ]; then write_status ok; else write_status failed; fi
+  local result=failed; [ "$rc" = 0 ] && result=ok
+  # One line per finished deploy, oldest first, for deploy_status and server_status: "<started> <result> <commit>".
+  { echo "$DEPLOY_STARTED $result $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"; tail -n 49 "$STATE/history.log" 2>/dev/null || true; } \
+    | sort > "$STATE/history.log.new" && mv "$STATE/history.log.new" "$STATE/history.log"
+  write_status "$result"
   rmdir "$LOCK"
   return "$rc"
 }
