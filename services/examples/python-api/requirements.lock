@@ -1,0 +1,4 @@
+# Pinned dependencies with hashes, one per line. The helper installs exactly these into .venv.
+# This example uses only the standard library, so the list is empty. Make it for your own app with
+#   uv export --format requirements-txt --no-dev --no-emit-project > requirements.lock
+# (or pip-compile --generate-hashes). Every line needs a --hash; builds from source are refused.

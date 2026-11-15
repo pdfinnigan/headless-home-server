@@ -59,7 +59,7 @@ your devices ─► Tailscale ────────────────�
 | `scripts/gateway-secrets.sh` | Puts the gateway's secrets into Cloudflare, typed by you |
 | `gateway/` | The OAuth gateway Worker for MCP namespaces, configured from your config |
 | `scripts/check-no-personal.sh` | Scans for personal info before you share a copy |
-| `services/examples/` | A static site, a JSON API and two small MCP servers |
+| `services/examples/` | A static site, a JSON API, a Python service with a scheduled job, and two small MCP servers |
 
 ## Requirements
 

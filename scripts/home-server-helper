@@ -8,8 +8,9 @@
 #   home-server-helper tunnel           install the staged tunnel config and (re)start cloudflared
 #
 # What it can do as root is narrow on purpose: create hidden non-admin service users, copy staged
-# files into a service user's home, run npm ci there AS that user, and write LaunchDaemons whose
-# UserName is always a service user. So the admin account can make service users run code, never root.
+# files into a service user's home, install its npm or pip dependencies there AS that user, and write
+# LaunchDaemons (the service, plus any scheduled jobs) whose UserName is always a service user. So the
+# admin account can make service users run code, never root.
 #
 # Each service runs as its own user, <SERVICE_USER>_<name> (dashes become underscores), unless its
 # config entry says "user": "shared", in which case it runs as SERVICE_USER with the tunnel.
@@ -83,13 +84,43 @@ private_group() {
   chgrp "$g" "$h"; chmod 700 "$h"
 }
 
-load_daemon() {  # load_daemon <label> <rendered plist>
+load_daemon() {  # load_daemon <label> <rendered plist> [nostart]
   dst="/Library/LaunchDaemons/$1.plist"
   plutil -lint "$2" >/dev/null || die "rendered plist for $1 is invalid"
   install -m 644 -o root -g wheel "$2" "$dst"
   launchctl bootout "system/$1" >/dev/null 2>&1 || true
   launchctl bootstrap system "$dst"
-  launchctl kickstart -k "system/$1"
+  # A scheduled job waits for its time (or its RunAtLoad); a service starts now.
+  [ "${3:-}" = nostart ] || launchctl kickstart -k "system/$1"
+}
+
+unload_daemon() {  # unload_daemon <label>
+  launchctl bootout "system/$1" >/dev/null 2>&1 || true
+  rm -f "/Library/LaunchDaemons/$1.plist"
+}
+
+# remove_jobs <service> [job names to keep...]: unload that service's scheduled jobs, except those.
+# Service names have no dots, so <prefix>.<service>.* never matches another service's daemons.
+remove_jobs() {
+  svc="$1"; shift
+  for f in /Library/LaunchDaemons/"$PREFIX.$svc".*.plist; do
+    [ -e "$f" ] || continue
+    l="$(basename "$f" .plist)"; j="${l#"$PREFIX.$svc."}"
+    case " $* " in *" $j "*) continue ;; esac
+    unload_daemon "$l"
+    echo "home-server-helper: removed job $svc.$j"
+  done
+}
+
+# find_python <app dir>: python3.X if the app's .python-version names one, else python3 (Homebrew's).
+find_python() {
+  want=python3 v=3
+  if [ -f "$1/.python-version" ]; then
+    v="$(head -1 "$1/.python-version" | tr -d ' \r')"
+    printf '%s' "$v" | grep -Eq '^3\.[0-9]{1,2}$' || die ".python-version must hold a version like 3.12"
+    want="python$v"
+  fi
+  find_bin "$want" || die "this service needs $want, which isn't installed (brew install python@$v)"
 }
 
 valid_name() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; }
@@ -122,6 +153,16 @@ service)
     NPM="$(find_bin npm)" || die "this service has a package-lock.json but npm wasn't found"
     (cd "$TMP/app" && as_user "$RUN_USER" "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-fund --silent) \
       || die "npm ci failed; the running copy is unchanged"
+  fi
+  # Python: a virtualenv in the app folder, filled only from the lock file. Every package must match
+  # its hash and be a prebuilt wheel, so nothing unpinned is downloaded and nothing compiles here.
+  if [ -f "$TMP/app/requirements.lock" ]; then
+    PY="$(find_python "$TMP/app")" || exit 1
+    rm -rf "$TMP/app/.venv"
+    as_user "$RUN_USER" "$PY" -m venv "$TMP/app/.venv" || die "couldn't create the virtualenv"
+    (cd "$TMP/app" && as_user "$RUN_USER" .venv/bin/python -m pip install --require-hashes \
+      --only-binary :all: --no-deps --no-input --disable-pip-version-check --quiet -r requirements.lock) \
+      || die "pip install failed; the running copy is unchanged"
   fi
 
   install -d -o "$RUN_USER" -m 755 "$RUN_HOME/services" "$RUN_HOME/Library/Logs"
@@ -166,13 +207,64 @@ service)
 EOF
   load_daemon "$LABEL" "$TMP/plist"
   echo "home-server-helper: $name is running as $RUN_USER on 127.0.0.1:$PORT"
+
+  # Scheduled jobs, one line each: JOB=<job>|<runAtLoad 0 or 1>|<HH:MM,HH:MM,...>|<command>.
+  # Each runs as the service's user, in its folder, at those times in the Mac's time zone. launchd
+  # runs a time missed while the Mac slept when it wakes, not one missed while it was off; runAtLoad
+  # also runs it at boot and after each deploy.
+  KEEP=""
+  sed -n 's/^JOB=//p' "$SRC/service.conf" > "$TMP/jobs"
+  while IFS= read -r line; do
+    job="${line%%|*}"; rest="${line#*|}"
+    load="${rest%%|*}"; rest="${rest#*|}"
+    times="${rest%%|*}"; jrun="${rest#*|}"
+    valid_name "$job" || die "bad job name '$job'"
+    case "$load" in 0) atload=false ;; 1) atload=true ;; *) die "job $job: bad runAtLoad" ;; esac
+    [ -n "$jrun" ] && [ "$jrun" != "$rest" ] || die "job $job: no command"
+    cal=""
+    for t in $(printf '%s' "$times" | tr , ' '); do
+      printf '%s' "$t" | grep -Eq '^([01][0-9]|2[0-3]):[0-5][0-9]$' || die "job $job: bad time '$t' (use HH:MM)"
+      h="${t%%:*}"; m="${t#*:}"   # 08 -> 8: launchd wants plain integers
+      cal="$cal<dict><key>Hour</key><integer>${h#0}</integer><key>Minute</key><integer>${m#0}</integer></dict>"
+    done
+    [ -n "$cal" ] || die "job $job: no times"
+    JLABEL="$LABEL.$job"
+    cat > "$TMP/job.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$JLABEL</string>
+  <key>UserName</key><string>$RUN_USER</string>
+  <key>WorkingDirectory</key><string>$(xml "$DST")</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/sh</string><string>-c</string><string>exec $(xml "$jrun")</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>$(xml "$RUN_HOME")</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>HOST</key><string>127.0.0.1</string>
+    <key>PORT</key><string>$PORT</string>
+  </dict>
+  <key>StartCalendarInterval</key><array>$cal</array>
+  <key>RunAtLoad</key><$atload/>
+  <key>StandardOutPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.$job.log")</string>
+  <key>StandardErrorPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.$job.log")</string>
+</dict>
+</plist>
+EOF
+    load_daemon "$JLABEL" "$TMP/job.plist" nostart
+    KEEP="$KEEP $job"
+    echo "home-server-helper: job $name.$job runs at $times"
+  done < "$TMP/jobs"
+  # shellcheck disable=SC2086  # one job name per word
+  remove_jobs "$name" $KEEP
   ;;
 
 remove)
   valid_name "$name" || die "bad service name"
-  LABEL="$PREFIX.$name"
-  launchctl bootout "system/$LABEL" >/dev/null 2>&1 || true
-  rm -f "/Library/LaunchDaemons/$LABEL.plist"
+  remove_jobs "$name"
+  unload_daemon "$PREFIX.$name"
   [ -L "$SVC_HOME/services/$name" ] || rm -rf "$SVC_HOME/services/$name"
   OWN_HOME="$(home_of "$(own_user "$name")")"
   if [ -n "$OWN_HOME" ] && [ -d "$OWN_HOME/services/$name" ] && [ ! -L "$OWN_HOME/services/$name" ]; then rm -rf "$OWN_HOME/services/$name"; fi

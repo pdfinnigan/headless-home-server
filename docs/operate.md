@@ -22,6 +22,19 @@ whether each service answers. `--force` redeploys everything.
   namespaces need nothing: they share the gateway's hostnames.)
 - A new MCP namespace: add it as a connector in each app that should have it.
 - A removed public hostname: delete its DNS record in the Cloudflare dashboard.
+- A service with a `source` in a private repo: give the admin account read access once. Make a key
+  on the server (`ssh-keygen -t ed25519 -f ~/.ssh/<repo>_deploy -N ''`), add the `.pub` as a
+  read-only deploy key on that repo, and point an SSH host alias at it in `~/.ssh/config`:
+
+  ```
+  Host github-<repo>
+    HostName github.com
+    IdentityFile ~/.ssh/<repo>_deploy
+    IdentitiesOnly yes
+  ```
+
+  Then use `git@github-<repo>:<owner>/<repo>.git` as `source.repo`. deploy.sh fetches only the
+  pinned commit, into `~/.home-server/deploy/sources/`.
 
 ## Health
 
@@ -37,6 +50,8 @@ every 5 minutes; `/usage` (GitHub sign-in) shows calls and errors per app and to
 
 - Services: `sudo tail -f ~svc_<service>/Library/Logs/<service>.log` (dashes in the name become
   underscores in the user; `~svc/...` for `"user": "shared"` services)
+- Scheduled jobs: `sudo tail -f ~svc_<service>/Library/Logs/<service>.<job>.log`. Run one now
+  with `sudo launchctl kickstart system/local.home-server.<service>.<job>`.
 - Tunnel: `sudo tail -f ~svc/Library/Logs/cloudflared.log`
 - Gateway: Cloudflare dashboard > Workers > the gateway > Observability
 - Deploys: `~/.home-server/deploy/last-run.log` and `~/Library/Logs/home-server-deploy.log`
