@@ -35,6 +35,8 @@ sudo tee "$HELPER" >/dev/null <<EOF
 # $MARK
 echo "\$*" >> $STATE_DIR/out/calls
 [ "\$1" = service ] && { rm -rf "$STATE_DIR/out/\$2"; cp -R "$STATE_DIR/stage/\$2" "$STATE_DIR/out/\$2"; }
+# It runs as root under sudo: hand what it wrote back to the test's user.
+chown -R "\${SUDO_UID:-0}" "$STATE_DIR/out"
 exit 0
 EOF
 sudo chmod 755 "$HELPER"
