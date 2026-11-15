@@ -51,7 +51,8 @@ fi
 # Its own primary group and a home only it can open: in the default group (staff) it could read
 # every 750 home on the Mac, yours included. scripts/home-server-helper does the same per service.
 SVC_HOME="$(user_home "$SVC")"
-gid="$(dscl . -read "/Groups/$SVC" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
+# No such group yet is the normal first-run answer; `|| true` keeps pipefail from ending the script here.
+gid="$(dscl . -read "/Groups/$SVC" PrimaryGroupID 2>/dev/null | awk '{print $2}' || true)"
 if [ -z "$gid" ]; then
   for c in $(id -u "$SVC") $(seq 401 499); do dscl . -search /Groups PrimaryGroupID "$c" | grep -q . || { gid="$c"; break; }; done
   [ -n "$gid" ] || die "no free group id for $SVC"
@@ -86,14 +87,14 @@ systemsetup -f -setremotelogin on >/dev/null 2>&1 \
 ADMIN_HOME="$(user_home "$ADMIN")"
 if [ -s "$ADMIN_HOME/.ssh/authorized_keys" ]; then
   install -d -m 755 /etc/ssh/sshd_config.d
-  cat > /etc/ssh/sshd_config.d/100-keys-only.conf <<'EOF'
-# Written by headless-home-server scripts/harden.sh
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-PermitRootLogin no
-EOF
-  sshd -t || { rm -f /etc/ssh/sshd_config.d/100-keys-only.conf; die "sshd rejected the keys-only config; removed it"; }
-  launchctl kickstart -k system/com.openssh.sshd >/dev/null 2>&1 || true
+  KEYS_ONLY=/etc/ssh/sshd_config.d/100-keys-only.conf
+  want="$(printf '%s\n' "# Written by headless-home-server scripts/harden.sh" "PasswordAuthentication no" "KbdInteractiveAuthentication no" "PermitRootLogin no")"
+  # Only write and reload when it changes, so a rerun over SSH never restarts sshd under you.
+  if [ "$(cat "$KEYS_ONLY" 2>/dev/null || true)" != "$want" ]; then
+    printf '%s\n' "$want" > "$KEYS_ONLY"
+    sshd -t || { rm -f "$KEYS_ONLY"; die "sshd rejected the keys-only config; removed it"; }
+    launchctl kickstart -k system/com.openssh.sshd >/dev/null 2>&1 || true
+  fi
   say "SSH: keys only"
 else
   warn "SSH still accepts passwords: $ADMIN has no ~/.ssh/authorized_keys yet. Add your laptop's key (docs/HUMAN_CHECKLIST.md) and run this again."
