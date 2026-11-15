@@ -11,7 +11,8 @@ Merge to your branch, then any of:
 deploy.sh pulls, redeploys only services whose folder or config entry changed, removes services
 that left the config, updates the tunnel routes, and redeploys the gateway Worker when `gateway/`
 or the namespaces changed. The result goes to
-`/usr/local/var/home-server/status.txt`. `scripts/deploy.sh status` shows what's deployed and
+`/usr/local/var/home-server/status.txt`, with the last ten deploys (`~/.home-server/deploy/history.log`
+keeps fifty, one `<started> <ok|failed> <commit>` line each). `scripts/deploy.sh status` shows what's deployed and
 whether each service answers. `--force` redeploys everything.
 
 ## When a deploy needs you
