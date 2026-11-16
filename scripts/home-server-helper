@@ -88,7 +88,13 @@ load_daemon() {  # load_daemon <label> <rendered plist>
   plutil -lint "$2" >/dev/null || die "rendered plist for $1 is invalid"
   install -m 644 -o root -g wheel "$2" "$dst"
   launchctl bootout "system/$1" >/dev/null 2>&1 || true
-  launchctl bootstrap system "$dst"
+  # bootout returns before launchd has finished tearing the job down, and a bootstrap that races
+  # it fails with "5: Input/output error". Wait for the old job to go, then retry a few times.
+  i=0; while launchctl print "system/$1" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+  i=0; until err="$(launchctl bootstrap system "$dst" 2>&1)"; do
+    i=$((i + 1)); [ "$i" -lt 5 ] || die "couldn't load $1: $err"
+    sleep 1
+  done
   launchctl kickstart -k "system/$1"
 }
 
