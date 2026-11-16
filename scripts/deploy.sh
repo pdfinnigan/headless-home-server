@@ -47,7 +47,49 @@ fi
 cd "$HS_ROOT"
 [ -d .git ] || die "$HS_ROOT is not a git clone. Run scripts/setup-server.sh."
 
-entry() { local i; i="$(service_index "$1")"; printf '%s|%s|%s|%s|%s|%s' "$(cfg "services.$i.dir")" "$(cfg "services.$i.run")" "$(cfg "services.$i.port")" "$(cfg "services.$i.expose.auth")" "$(cfg "services.$i.expose.hostname")" "$(cfg "services.$i.user" own)"; }
+# entry <service>: everything in its config entry that a deploy depends on. Source and jobs are added
+# only when set, so an entry recorded before they existed still matches and doesn't redeploy.
+entry() {
+  local i; i="$(service_index "$1")"
+  printf '%s|%s|%s|%s|%s|%s' "$(cfg "services.$i.dir")" "$(cfg "services.$i.run")" "$(cfg "services.$i.port")" "$(cfg "services.$i.expose.auth")" "$(cfg "services.$i.expose.hostname")" "$(cfg "services.$i.user" own)"
+  [ -z "$(cfg "services.$i.source.repo")" ] || printf '|%s|%s' "$(cfg "services.$i.source.repo")" "$(cfg "services.$i.source.rev")"
+  [ "$(cfg "services.$i.jobs" 0)" = 0 ] || { echo; job_lines "$i"; }
+}
+
+# job_lines <service index>: one JOB=<name>|<runAtLoad 0/1>|<HH:MM,...>|<run> line per scheduled job.
+job_lines() {
+  local i="$1" n j k nt name run at load times
+  n="$(cfg "services.$i.jobs" 0)"
+  for ((j = 0; j < n; j++)); do
+    name="$(cfg "services.$i.jobs.$j.name")"; run="$(cfg "services.$i.jobs.$j.run")"
+    valid_name "$name" || die "$(cfg "services.$i.name"): job name '$name' must be lowercase letters, digits and dashes"
+    [ -n "$run" ] || die "$(cfg "services.$i.name"): job $name needs run"
+    [[ "$run" != *$'\n'* ]] || die "$(cfg "services.$i.name"): job $name's run must be one line"
+    times=""; nt="$(cfg "services.$i.jobs.$j.at" 0)"
+    for ((k = 0; k < nt; k++)); do
+      at="$(cfg "services.$i.jobs.$j.at.$k")"
+      [[ "$at" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "$(cfg "services.$i.name"): job $name time '$at' must be HH:MM"
+      times="${times:+$times,}$at"
+    done
+    [ -n "$times" ] || die "$(cfg "services.$i.name"): job $name needs at least one time in at"
+    load=0; [ "$(cfg "services.$i.jobs.$j.runAtLoad" false)" = true ] && load=1
+    printf 'JOB=%s|%s|%s|%s\n' "$name" "$load" "$times" "$run"
+  done
+}
+
+# stage_source <service> <repo> <rev> <dir> <dest>: copy <dir> at commit <rev> of another git repo,
+# for services whose code lives outside this one. Fetches only that commit, into a cache per service.
+stage_source() {
+  local cache="$STATE/sources/$1.git" tree="$3"
+  [ -d "$cache" ] || git init -q --bare "$cache"
+  if ! git -C "$cache" cat-file -e "$3^{commit}" 2>/dev/null; then
+    git -C "$cache" fetch -q --depth 1 "$2" "$3" \
+      || die "$1: couldn't fetch $3 from $2. Can this account read that repo? (docs/operate.md)"
+  fi
+  [ -z "$4" ] || [ "$4" = . ] || tree="$3:$4"
+  [ "$(git -C "$cache" cat-file -t "$tree" 2>/dev/null)" = tree ] || die "$1: $4 isn't a folder at $3 in $2"
+  git -C "$cache" archive --format=tar "$tree" | tar -xf - -C "$5"
+}
 answers() { curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$1/" 2>/dev/null || true; }
 
 if [ "$MODE" = status ]; then
@@ -123,22 +165,38 @@ for s in $(service_names); do
   valid_name "$s" || die "service name '$s' must be lowercase letters, digits and dashes"
   i="$(service_index "$s")"
   dir="$(cfg "services.$i.dir")"; run="$(cfg "services.$i.run")"; port="$(cfg "services.$i.port")"
-  [ -d "$dir" ] || die "$s: folder $dir isn't in the repo"
+  src_repo="$(cfg "services.$i.source.repo")"; src_rev="$(cfg "services.$i.source.rev")"
+  if [ -n "$src_repo" ]; then
+    [[ "$src_repo" =~ ^(https://|ssh://|git@|file://)[^[:space:]]+$ ]] || die "$s: source.repo must be an https://, ssh://, git@ or file:// URL"
+    [[ "$src_rev" =~ ^[0-9a-f]{40}$ ]] || die "$s: source.rev must be a full 40-character commit hash"
+  else
+    [ -d "$dir" ] || die "$s: folder $dir isn't in the repo"
+  fi
   [ -n "$run" ] && [[ "$port" =~ ^[0-9]+$ ]] || die "$s: needs run and port"
   isolation="$(cfg "services.$i.user" own)"
   [ "$isolation" = own ] || [ "$isolation" = shared ] || die "$s: user must be \"own\" or \"shared\""
   mcp_path=/mcp; [ "$(cfg "services.$i.expose.auth")" = gateway ] && mcp_path="/$s/mcp"
   last_rev="$(cat "$STATE/$s.rev" 2>/dev/null || true)"
   last_entry="$(cat "$STATE/$s.entry" 2>/dev/null || true)"
-  if [ "$FORCE" = 0 ] && [ -n "$last_rev" ] && [ "$last_entry" = "$(entry "$s")" ] && git diff --quiet "$last_rev" HEAD -- "$dir" 2>/dev/null; then
+  this_entry="$(entry "$s")"
+  # A source service changes only through its entry (the pinned rev); a local one also through its folder.
+  if [ "$FORCE" = 0 ] && [ -n "$last_rev" ] && [ "$last_entry" = "$this_entry" ] \
+    && { [ -n "$src_repo" ] || git diff --quiet "$last_rev" HEAD -- "$dir" 2>/dev/null; }; then
     continue
   fi
-  say "$s: deploying $HEAD_REV"
+  say "$s: deploying $HEAD_REV${src_repo:+ (code: ${src_rev:0:7} of $src_repo)}"
   rm -rf "${STAGE:?}/$s"; mkdir -p "$STAGE/$s/app"
-  git archive --format=tar "HEAD:$dir" | tar -xf - -C "$STAGE/$s/app"
-  printf 'RUN=%s\nPORT=%s\nISOLATION=%s\nMCP_PATH=%s\n' "$run" "$port" "$isolation" "$mcp_path" > "$STAGE/$s/service.conf"
+  if [ -n "$src_repo" ]; then
+    stage_source "$s" "$src_repo" "$src_rev" "$dir" "$STAGE/$s/app"
+  else
+    git archive --format=tar "HEAD:$dir" | tar -xf - -C "$STAGE/$s/app"
+  fi
+  {
+    printf 'RUN=%s\nPORT=%s\nISOLATION=%s\nMCP_PATH=%s\n' "$run" "$port" "$isolation" "$mcp_path"
+    job_lines "$i"
+  } > "$STAGE/$s/service.conf"
   sudo -n "$HS_HELPER" service "$s" || die "$s: the helper failed (see above)"
-  echo "$HEAD_REV" > "$STATE/$s.rev"; entry "$s" > "$STATE/$s.entry"
+  echo "$HEAD_REV" > "$STATE/$s.rev"; printf '%s\n' "$this_entry" > "$STATE/$s.entry"
   did=1
 done
 

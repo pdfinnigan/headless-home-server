@@ -30,3 +30,6 @@ jobs:
       - run: for f in scripts/*.sh scripts/home-server-helper scripts/lib/*.sh; do bash -n "$f" || exit 1; done
       - run: cd scripts && sha256sum -c home-server-helper.sha256
       - run: for f in services/examples/*/server.js; do node --check "$f" || exit 1; done
+      - run: python3 -m py_compile services/examples/*/*.py
+      # deploy.sh end to end with a stand-in helper: local and source services, scheduled jobs.
+      - run: scripts/test/deploy-test.sh

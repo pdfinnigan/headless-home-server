@@ -8,10 +8,29 @@ description: Add, change or remove a service (website, API, MCP server, bot, any
 1. **Code:** a folder under `services/<name>/` (not `services/examples/`). It must:
    - listen on `process.env.HOST` and `process.env.PORT` (HOST is always 127.0.0.1);
    - answer `GET /` with any HTTP status, so deploy.sh and doctor.sh can tell it's up;
-   - keep dependencies in `package.json` with a committed `package-lock.json` (Node), or be
-     self-contained. Install scripts don't run (`npm ci --ignore-scripts`).
+   - keep dependencies in `package.json` with a committed `package-lock.json` (Node), in a
+     `requirements.lock` with a `--hash` on every line (Python), or be self-contained. Install
+     scripts don't run (`npm ci --ignore-scripts`), and pip installs only prebuilt wheels that match
+     their hashes. For Python, the helper makes `.venv/` in the service folder, so `run` is
+     `.venv/bin/python ...` (add `env PYTHONPATH=src` for a src layout, since the app itself isn't
+     installed). A `.python-version` with e.g. `3.12` picks Homebrew's `python3.12`; otherwise
+     `python3`. Make the lock with `uv export --format requirements-txt --no-dev --no-emit-project`
+     or `pip-compile --generate-hashes`.
    - read secrets from `$HOME/secrets/<name>.env`, never from the repo.
    Any language works if `run` can start it with what's installed on the server.
+
+   **Code in another repo:** instead of a folder here, give the entry `"source": {"repo":
+   "git@github.com:<owner>/<repo>.git", "rev": "<full commit hash>"}` and set `dir` to the folder
+   in that repo (`.` for its root). The server's admin account fetches it, so a private repo needs
+   a read-only deploy key for that account (docs/operate.md). To ship a new version, change `rev`
+   in a commit here and deploy: this repo's history then records every version that ran.
+
+   **Scheduled jobs** (a sync, a backup, a report): add `"jobs": [{"name": "sync", "run": "...",
+   "at": ["06:00", "18:00"]}]` to the service. Each job runs as the service's user, in its folder,
+   with its secrets and data, at those times in the server's time zone. launchd catches up on a time
+   missed while the Mac slept but not one missed while it was off, so a job that must not skip
+   should check its own last success, and can set `"runAtLoad": true` to also run at boot and after
+   each deploy. A job is one command, like `run`.
 2. **Config:** add an entry to `services` in `config/home-server.json`: `name` (lowercase, dashes),
    `dir`, `run` (started inside `dir`), a free `port` (1024+, unique), and `expose.auth`
    (docs/exposure.md). Default to the least exposure that does the job: `local` or `tailscale`

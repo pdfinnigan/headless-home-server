@@ -90,7 +90,7 @@
           },
           "dir": {
             "type": "string",
-            "description": "Folder in this repo that holds the service. It is copied to the service user's home on deploy."
+            "description": "Folder that holds the service, in this repo or, with source, in that repo. It is copied to the service user's home on deploy."
           },
           "run": {
             "type": "string",
@@ -158,6 +158,63 @@
                   "pattern": "^(oauth:(claude|chatgpt)|bearer:[a-z0-9][a-z0-9-]*)$"
                 },
                 "description": "Who may use it: oauth:claude (Claude's apps), oauth:chatgpt, bearer:<name>. Nobody else."
+              }
+            }
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "repo",
+              "rev"
+            ],
+            "description": "Take the service's code from another git repo instead of this one. dir is then a folder in that repo ('.' for its root). To ship a new version, change rev and deploy.",
+            "properties": {
+              "repo": {
+                "type": "string",
+                "pattern": "^(https://|ssh://|git@|file://)\\S+$",
+                "description": "Git URL the admin user can fetch, e.g. git@github.com:you/app.git with a read-only deploy key."
+              },
+              "rev": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$",
+                "description": "The full commit hash to deploy. A pin, never a branch, so this repo's history records every version that ran."
+              }
+            }
+          },
+          "jobs": {
+            "type": "array",
+            "description": "Commands that run on a schedule as the service's user, in its folder, with its secrets and data. Each is a LaunchDaemon <prefix>.<service>.<job>; its log is <service>.<job>.log.",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "run",
+                "at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+                },
+                "run": {
+                  "type": "string",
+                  "description": "Command started in the service's folder."
+                },
+                "at": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  },
+                  "description": "Times of day, HH:MM, in the server's time zone."
+                },
+                "runAtLoad": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Also run at boot and after each deploy. launchd catches up on a time missed during sleep, but not one missed while the Mac was off; this covers that."
+                }
               }
             }
           }

@@ -48,6 +48,38 @@
       }
     },
     {
+      "name": "py-api",
+      "dir": "services/examples/python-api",
+      "run": ".venv/bin/python server.py",
+      "port": 8082,
+      "expose": {
+        "auth": "local"
+      },
+      "jobs": [
+        {
+          "name": "stamp",
+          "run": ".venv/bin/python job.py",
+          "at": [
+            "03:00",
+            "15:00"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reports",
+      "dir": "backend",
+      "run": "env PYTHONPATH=src .venv/bin/python -m reports.serve",
+      "port": 8083,
+      "source": {
+        "repo": "git@github.com:you/reports.git",
+        "rev": "0000000000000000000000000000000000000000"
+      },
+      "expose": {
+        "auth": "local"
+      }
+    },
+    {
       "name": "status",
       "dir": "services/examples/mcp-server",
       "run": "node server.js",
