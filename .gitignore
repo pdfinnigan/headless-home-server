@@ -1,4 +1,15 @@
 node_modules/
 .DS_Store
+
+# Real configs (keep only .example files in git)
+*.plist
+!*.plist.example
+.env
+.env.*
+
+# Logs
+*.log
+
+# Python
 __pycache__/
 .venv/

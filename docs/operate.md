@@ -37,6 +37,21 @@ whether each service answers. `--force` redeploys everything.
   Then use `git@github-<repo>:<owner>/<repo>.git` as `source.repo`. deploy.sh fetches only the
   pinned commit, into `~/.home-server/deploy/sources/`.
 
+## From your AI apps
+
+`services/ops` is an MCP server for exactly this: `server_status` (a verdict with reasons, the
+machine, each service locally and through the gateway, the last deploys, and the log summary),
+`server_usage`, `deploy_request` and `deploy_status`. Publish it through the gateway with
+`"user": "shared"` (it reads the deploy folder and the log summary) and list only the apps that
+should be able to deploy. The example config has an `ops` entry to copy.
+
+## macOS updates
+
+`ssh <alias> 'sudo -n /usr/local/sbin/home-server-helper os-update check'` lists pending updates.
+Without `check` it installs them in the background and restarts the Mac if one needs it, so every
+service is down for 20 to 30 minutes. Warn the person before running it. Log:
+`/var/log/home-server-os-update.log`.
+
 ## Health
 
 `scripts/doctor.sh` checks sleep, firewall, SSH, the helper, open ports, and every service locally
@@ -49,13 +64,19 @@ every 5 minutes; `/usage` (GitHub sign-in) shows calls and errors per app and to
 
 ## Logs
 
-- Services: `sudo tail -f ~svc_<service>/Library/Logs/<service>.log` (dashes in the name become
-  underscores in the user; `~svc/...` for `"user": "shared"` services)
-- Scheduled jobs: `sudo tail -f ~svc_<service>/Library/Logs/<service>.<job>.log`. Run one now
+Every log is in `/usr/local/var/log/home-server/`, and the admin account reads them without sudo.
+Each belongs to the user that writes it (group admin, mode 640), so no service can read another's.
+
+- Services: `tail -f /usr/local/var/log/home-server/<service>.log`
+- Scheduled jobs: `tail -f /usr/local/var/log/home-server/<service>.<job>.log`. Run one now
   with `sudo launchctl kickstart system/local.home-server.<service>.<job>`.
-- Tunnel: `sudo tail -f ~svc/Library/Logs/cloudflared.log`
+- Tunnel: `cloudflared.log`; the deploy watcher: `deploy.log` (plus `~/.home-server/deploy/last-run.log`)
 - Gateway: Cloudflare dashboard > Workers > the gateway > Observability
-- Deploys: `~/.home-server/deploy/last-run.log` and `~/Library/Logs/home-server-deploy.log`
+
+Rotation and errors: `local.home-server.logs` runs `home-server-helper logs` as root every 15 min.
+A log over 1 MB is copied to `<name>.log.1.gz` (5 kept) and emptied in place, and the job writes
+`summary.txt`: each log's size, launchd's restart count and last exit code, and its error lines
+from the last 24 h, redacted (no emails, IPs, tokens or long ids).
 
 ## Reaching it
 

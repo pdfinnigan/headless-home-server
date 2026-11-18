@@ -99,6 +99,27 @@
       }
     },
     {
+      "name": "ops",
+      "dir": "services/ops",
+      "run": "env OPS_ALLOWED_HOSTS=origin.example.com,127.0.0.1:8773 OPS_STATS_URL=https://mcp.example.com/stats OPS_STATS_SERVICES=status:8765,notes:8766,ops:8773 /usr/local/bin/node src/server.js",
+      "port": 8773,
+      "user": "shared",
+      "expose": {
+        "auth": "gateway"
+      },
+      "mcp": {
+        "tools": [
+          "server_status",
+          "server_usage",
+          "deploy_request",
+          "deploy_status"
+        ],
+        "clients": [
+          "oauth:claude"
+        ]
+      }
+    },
+    {
       "name": "notes",
       "dir": "services/examples/mcp-notes",
       "run": "node server.js",

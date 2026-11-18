@@ -102,9 +102,24 @@ use. The client sends `Authorization: Bearer <token>` to `https://<gateway.hostn
 - **`https://<gateway.hostname>/usage`** (GitHub sign-in): calls and errors per app, tool and day.
 - **`scripts/doctor.sh`** checks each namespace locally, that the gateway asks for sign-in, that the
   origin refuses requests without Access, and the gateway's own probe.
+- **`https://<gateway.hostname>/stats/recent`** (public, for a live feed on a website): the last 12
+  calls from the past week to the tools in `gateway.publicFeedTools`, each as app family, tool name,
+  minute, latency rounded to 10 ms and ok. The list is empty by default, so the feed is too. Apps show as Claude, ChatGPT, Codex, Cursor
+  or `gateway.feedApps` labels, anything else as "AI app". Client
+  names, arguments and results never appear.
+- **`https://<gateway.hostname>/stats/history`** (public, for a status page): per namespace, 90
+  daily uptime bars, 24-hour, 30-day and 90-day uptime, latency, and the last 20 incidents. Two
+  failed probes in a row open an incident and one success closes it. `gateway.statusHidden` leaves
+  namespaces out (e.g. an older URL for the same server).
+- **Push alerts** (`/alerts`, GitHub sign-in to add a device): opening or closing an incident sends
+  a Web Push to every added device. Pushes carry no data: the status page's service worker reads the
+  public `/alerts/latest` to word the notification. The VAPID key is made on first use and kept in
+  D1, so there's nothing to set up. A second Worker, `<workerName>-watcher` (src/watcher.ts,
+  deployed with the gateway), alerts the same devices if the probes stop for 10 minutes.
+  `gateway.statusPageUrl` is where the alerts page links back to.
 - **Logs:** the Worker logs one line per request (namespace, caller, method, tool, status), never
   arguments or results; see them under Workers > Observability. Each server logs to
-  `~<its user>/Library/Logs/<name>.log`.
+  `/usr/local/var/log/home-server/<name>.log`.
 
 ## Turning it off
 

@@ -1,0 +1,15 @@
+{
+  "name": "home-server-ops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP tools to check on and deploy the home server: server_status, server_usage, deploy_request, deploy_status.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test --test-reporter=tap test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

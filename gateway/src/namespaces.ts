@@ -36,7 +36,7 @@ const TOOL = /^[A-Za-z0-9_.-]{1,64}$/;
 const CLIENT = /^(oauth:(claude|chatgpt)|bearer:[a-z0-9][a-z0-9-]{0,63})$/;
 
 /** Paths the gateway itself serves; a namespace can't take them. */
-export const RESERVED_PATHS = new Set(["/authorize", "/token", "/register", "/callback", "/stats", "/usage", "/health", "/oauth"]);
+export const RESERVED_PATHS = new Set(["/authorize", "/token", "/register", "/callback", "/stats", "/usage", "/alerts", "/health", "/oauth"]);
 
 function stringList(value: unknown, pattern: RegExp, what: string, ns: string): Set<string> {
 	if (!Array.isArray(value)) throw new Error(`NAMESPACES.${ns}.${what} must be a list`);

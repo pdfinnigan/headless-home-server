@@ -263,6 +263,32 @@
           "description": "D1 database name for the usage log and health history (created on first deploy), or false for none.",
           "default": "home-server-usage"
         },
+        "statusHidden": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Namespaces to leave off the public status page (GET /stats/history), e.g. an older URL for the same server."
+        },
+        "publicFeedTools": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+          "description": "Tools whose calls the public GET /stats/recent feed may show (app family, tool name, minute, latency, ok). Empty by default, which keeps the feed empty. List only tools whose names say nothing private."
+        },
+        "feedApps": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9 ._-]{0,39}$" },
+          "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 .-]{0,29}$" },
+          "description": "Extra app names for the public feed: { \"<lowercase text in the client name>\": \"<label>\" }, checked before the built-in ones (Claude, ChatGPT, Codex, Cursor). Anything unmatched shows as \"AI app\"."
+        },
+        "statusPageUrl": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Optional: your public status page (it reads /stats/history and turns on /alerts). The alerts page links back to it."
+        },
+        "usageDatabaseId": {
+          "description": "Optional: the id of an existing D1 database to use for the usage log, so the deploy binds it instead of looking it up by name.",
+          "type": "string",
+          "pattern": "^[0-9a-f-]{36}$"
+        },
         "bearerClients": {
           "type": "object",
           "description": "Clients that use a static token instead of OAuth (Claude Code, Codex, scripts): { name: sha256 hex of the token }. List them as bearer:<name> in a service's mcp.clients.",
