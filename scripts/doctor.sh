@@ -72,7 +72,7 @@ for s in $(service_names); do
   i="$(service_index "$s")"; port="$(cfg "services.$i.port")"; auth="$(cfg "services.$i.expose.auth")"
   code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null || true)"
   run_user="$SVC"; [ "$(cfg "services.$i.user" own)" = own ] && run_user="${SVC}_${s//-/_}"
-  [ -n "$code" ] && [ "$code" != 000 ] && ok "$s answers on 127.0.0.1:$port ($auth, runs as $run_user)" || bad "$s isn't answering on 127.0.0.1:$port (log: ~$run_user/Library/Logs/$s.log)"
+  [ -n "$code" ] && [ "$code" != 000 ] && ok "$s answers on 127.0.0.1:$port ($auth, runs as $run_user)" || bad "$s isn't answering on 127.0.0.1:$port (log: /usr/local/var/log/home-server/$s.log)"
   if id "$run_user" >/dev/null 2>&1; then
     dseditgroup -o checkmember -m "$run_user" admin >/dev/null 2>&1 && bad "$s runs as $run_user, which is an admin"
     [ "$(id -g "$run_user")" = 20 ] && bad "$s: $run_user is in the staff group, so it can read other homes (redeploy it: scripts/deploy.sh --force)"

@@ -220,7 +220,8 @@ if [ "$rc" = 3 ]; then
 elif [ "$rc" != 0 ]; then
   die "tunnel: render-tunnel.sh failed (see above)"
 fi
-if [ -s "$tunnel" ] && ! cmp -s "$tunnel" "$STATE/tunnel.yml"; then
+# --force reinstalls the tunnel too, so its LaunchDaemon picks up helper changes (its log path, say).
+if [ -s "$tunnel" ] && { [ "$FORCE" = 1 ] || ! cmp -s "$tunnel" "$STATE/tunnel.yml"; }; then
   say "tunnel: routes changed; installing them"
   mkdir -p "$STAGE/tunnel"; cp "$tunnel" "$STAGE/tunnel/config.yml"
   sudo -n "$HS_HELPER" tunnel || die "tunnel: the helper failed (see above)"

@@ -104,7 +104,7 @@ use. The client sends `Authorization: Bearer <token>` to `https://<gateway.hostn
   origin refuses requests without Access, and the gateway's own probe.
 - **Logs:** the Worker logs one line per request (namespace, caller, method, tool, status), never
   arguments or results; see them under Workers > Observability. Each server logs to
-  `~<its user>/Library/Logs/<name>.log`.
+  `/usr/local/var/log/home-server/<name>.log`.
 
 ## Turning it off
 

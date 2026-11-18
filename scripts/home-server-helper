@@ -5,12 +5,24 @@
 #
 #   home-server-helper service <name>   install or update one service from its staged copy
 #   home-server-helper remove <name>    stop one service and remove its files
-#   home-server-helper tunnel           install the staged tunnel config and (re)start cloudflared
+#   home-server-helper tunnel           install the staged tunnel config and restart cloudflared
+#                                        with no gap (a second connector covers the restart)
+#   home-server-helper os-update [check] install Apple's pending macOS updates, then restart if they
+#                                        need it ("check" only lists them)
+#   home-server-helper logs             scan and rotate the logs in /usr/local/var/log/home-server and
+#                                        write their summary (local.home-server.logs runs it every 15 min)
+#
+# Logs: every service, job, the tunnel and the deploy watcher write to
+# /usr/local/var/log/home-server/<name>.log. The folder is root's, so no service can create or swap
+# files there. Each log belongs to the user that writes it, group admin, mode 640: the admin account
+# can read them all without sudo, and no service can read another's.
 #
 # What it can do as root is narrow on purpose: create hidden non-admin service users, copy staged
 # files into a service user's home, install its npm or pip dependencies there AS that user, and write
 # LaunchDaemons (the service, plus any scheduled jobs) whose UserName is always a service user. So the
-# admin account can make service users run code, never root.
+# admin account can make service users run code, never root. os-update adds one more power: install
+# whatever updates Apple's softwareupdate offers and restart. It takes no package names or flags, so
+# the worst a caller can do is restart the Mac at a bad moment.
 #
 # Each service runs as its own user, <SERVICE_USER>_<name> (dashes become underscores), unless its
 # config entry says "user": "shared", in which case it runs as SERVICE_USER with the tunnel.
@@ -24,6 +36,8 @@ umask 022
 CONF=/usr/local/etc/home-server/helper.conf
 STAGE=/usr/local/var/home-server/stage
 PREFIX=local.home-server
+LOGDIR=/usr/local/var/log/home-server
+LOG_GROUP=admin
 die() { echo "home-server-helper: $*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run with sudo"
@@ -129,6 +143,15 @@ find_python() {
   find_bin "$want" || die "this service needs $want, which isn't installed (brew install python@$v)"
 }
 
+# prep_log <file> <user>: make sure a log exists in LOGDIR, belongs to <user> and only it and the
+# admin group can read it. Root creates it, so a launchd job opening it never makes it world-readable.
+prep_log() {
+  install -d -o root -g wheel -m 755 "$LOGDIR"
+  [ ! -L "$1" ] || rm -f "$1"
+  [ -f "$1" ] || : > "$1"
+  chown "$2:$LOG_GROUP" "$1"; chmod 640 "$1"
+}
+
 valid_name() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; }
 
 cmd="${1:-}"; name="${2:-}"
@@ -185,6 +208,7 @@ service)
   rm -rf "$DST.old"
 
   LABEL="$PREFIX.$name"
+  prep_log "$LOGDIR/$name.log" "$RUN_USER"
   cat > "$TMP/plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -206,8 +230,8 @@ service)
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.log")</string>
-  <key>StandardErrorPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.log")</string>
+  <key>StandardOutPath</key><string>$LOGDIR/$name.log</string>
+  <key>StandardErrorPath</key><string>$LOGDIR/$name.log</string>
 </dict>
 </plist>
 EOF
@@ -235,6 +259,7 @@ EOF
     done
     [ -n "$cal" ] || die "job $job: no times"
     JLABEL="$LABEL.$job"
+    prep_log "$LOGDIR/$name.$job.log" "$RUN_USER"
     cat > "$TMP/job.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -254,8 +279,8 @@ EOF
   </dict>
   <key>StartCalendarInterval</key><array>$cal</array>
   <key>RunAtLoad</key><$atload/>
-  <key>StandardOutPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.$job.log")</string>
-  <key>StandardErrorPath</key><string>$(xml "$RUN_HOME/Library/Logs/$name.$job.log")</string>
+  <key>StandardOutPath</key><string>$LOGDIR/$name.$job.log</string>
+  <key>StandardErrorPath</key><string>$LOGDIR/$name.$job.log</string>
 </dict>
 </plist>
 EOF
@@ -293,6 +318,26 @@ tunnel)
   TMP="$(mktemp -d /var/tmp/home-server-helper.XXXXXX)"
   trap 'rm -rf "$TMP"' EXIT
   LABEL="$PREFIX.cloudflared"
+  prep_log "$LOGDIR/cloudflared.log" "$SERVICE_USER"
+
+  # Restart without a gap. Cloudflare sends a tunnel's requests to any connector that is up, so a
+  # short-lived second connector starts on the new config first and carries traffic while the main
+  # one restarts; it stops once the main one reports ready on its metrics port. If the second one
+  # doesn't come up within 30 s, this falls back to a plain restart (a few seconds' gap).
+  MAIN_METRICS=127.0.0.1:20248
+  HANDOFF_METRICS=127.0.0.1:20249
+  ready() { curl -fsS -m 2 "http://$1/ready" >/dev/null 2>&1; }
+  wait_ready() { n=0; while [ "$n" -lt 30 ]; do ready "$1" && return 0; sleep 1; n=$((n + 1)); done; return 1; }
+  HANDOFF=""
+  if launchctl print "system/$LABEL" >/dev/null 2>&1; then
+    as_svc "$CLOUDFLARED" tunnel --no-autoupdate --grace-period 5s --metrics "$HANDOFF_METRICS" --config "$CF/config.yml" run >/dev/null 2>&1 &
+    HANDOFF=$!
+    if wait_ready "$HANDOFF_METRICS"; then
+      echo "home-server-helper: a second tunnel connector is carrying traffic during the restart"
+    else
+      echo "home-server-helper: the second connector didn't come up; restarting with a short gap"
+    fi
+  fi
   cat > "$TMP/plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -301,19 +346,114 @@ tunnel)
   <key>Label</key><string>$LABEL</string>
   <key>UserName</key><string>$SERVICE_USER</string>
   <key>ProgramArguments</key>
-  <array><string>$CLOUDFLARED</string><string>tunnel</string><string>--no-autoupdate</string><string>--config</string><string>$(xml "$CF/config.yml")</string><string>run</string></array>
+  <array><string>$CLOUDFLARED</string><string>tunnel</string><string>--no-autoupdate</string><string>--metrics</string><string>$MAIN_METRICS</string><string>--config</string><string>$(xml "$CF/config.yml")</string><string>run</string></array>
   <key>EnvironmentVariables</key><dict><key>HOME</key><string>$(xml "$SVC_HOME")</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$(xml "$SVC_HOME/Library/Logs/cloudflared.log")</string>
-  <key>StandardErrorPath</key><string>$(xml "$SVC_HOME/Library/Logs/cloudflared.log")</string>
+  <key>StandardOutPath</key><string>$LOGDIR/cloudflared.log</string>
+  <key>StandardErrorPath</key><string>$LOGDIR/cloudflared.log</string>
 </dict>
 </plist>
 EOF
   load_daemon "$LABEL" "$TMP/plist"
+  if [ -n "$HANDOFF" ]; then
+    wait_ready "$MAIN_METRICS" || echo "home-server-helper: warning: cloudflared isn't ready after 30 s; see $LOGDIR/cloudflared.log"
+    kill -TERM "$HANDOFF" 2>/dev/null || true
+    wait "$HANDOFF" 2>/dev/null || true
+  fi
   echo "home-server-helper: tunnel config installed and cloudflared restarted"
   ;;
 
-*) die "usage: home-server-helper service <name> | remove <name> | tunnel" ;;
+os-update)
+  OSLOG=/var/log/home-server-os-update.log
+  case "$name" in ""|check) ;; *) die "usage: home-server-helper os-update [check]" ;; esac
+  pgrep -qx softwareupdate && die "softwareupdate is already running; see $OSLOG"
+  LIST="$(softwareupdate --list 2>&1)" || die "softwareupdate --list failed: $LIST"
+  if ! printf '%s\n' "$LIST" | grep -q '^\* Label:'; then
+    echo "home-server-helper: no macOS updates pending"
+    exit 0
+  fi
+  echo "home-server-helper: pending updates:"
+  printf '%s\n' "$LIST" | grep -A1 '^\* Label:'
+  [ "$name" = check ] && exit 0
+  # Detached from this session, so an SSH disconnect can't stop it halfway. The restart (when an
+  # update needs one) ends any SSH session, so the caller should warn the person first.
+  : > "$OSLOG"; chmod 644 "$OSLOG"
+  nohup /usr/sbin/softwareupdate --install --all --agree-to-license --restart </dev/null >>"$OSLOG" 2>&1 &
+  echo "home-server-helper: installing in the background (log: $OSLOG). The Mac restarts by itself if an update needs it."
+  ;;
+
+logs)
+  # Every 15 min, as root (local.home-server.logs). For each log in LOGDIR:
+  #  1. scan only what was written since the last run for error lines, and keep 24 h of them;
+  #  2. at 1 MB, copy it to <name>.log.1.gz (5 kept) and empty it in place. launchd opens logs for
+  #     appending, so the running service carries on writing to the same file;
+  #  3. write summary.txt: size, restarts and last exit code from launchd, error count and the last
+  #     3 error lines, redacted (no emails, IPs, tokens or long ids) and cut to 200 characters.
+  # summary.txt is readable by the service user's group, so the ops service can show it in
+  # server_status. The raw logs stay 640.
+  [ -z "$name" ] || die "usage: home-server-helper logs"
+  install -d -o root -g wheel -m 755 "$LOGDIR"
+  install -d -o root -g wheel -m 700 "$LOGDIR/.state"
+  MAX_BYTES=1048576 KEEP=5 SHOW=3 DAY=86400
+  now="$(date +%s)"
+  ERR_RE='(^|[^[:alpha:]])(error|err|errno|exception|fatal|panic|unhandled|uncaught|traceback|failed|failure|crash(ed)?|eaddrinuse|econnrefused|econnreset|etimedout)([^[:alpha:]]|$)'
+  redact() {
+    LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C tr '\t' ' ' | /usr/bin/perl -pe '
+      s/[\w.%+-]+@[\w-]+(\.[\w-]+)+/[email]/g;
+      s/\b\d{1,3}(\.\d{1,3}){3}(:\d+)?\b/[ip]/g;
+      s/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/[id]/gi;
+      s/((?:pass(?:word)?|secret|token|auth(?:orization)?|bearer|api[_-]?key|cookie)["\x27]?\s*[:=]?\s*)(?:bearer\s+)?[^\s,"\x27}]+/$1\[redacted]/gi;
+      s/[A-Za-z0-9_+\/=-]{24,}/[redacted]/g;
+      $_ = substr($_, 0, 200) . "\n" if length($_) > 201;'
+  }
+  OUT="$LOGDIR/summary.txt"
+  SUM="$(mktemp "$LOGDIR/.state/summary.XXXXXX")"
+  printf 'generated\t%s\n' "$now" > "$SUM"
+  for f in "$LOGDIR"/*.log; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    base="$(basename "$f" .log)"
+    printf '%s' "$base" | grep -Eq '^[a-z0-9][a-z0-9.-]{0,62}$' || continue
+    st="$LOGDIR/.state/$base"
+    size="$(stat -f %z "$f")"
+    off="$(cat "$st.offset" 2>/dev/null || echo 0)"
+    case "$off" in ''|*[!0-9]*) off=0 ;; esac
+    [ "$off" -le "$size" ] || off=0   # emptied or replaced since the last run
+    # 1. New error lines, stamped with this run's time. The deploy log is test output; deploy
+    #    results come from its own history, so it's only rotated.
+    if [ "$base" != deploy ] && [ "$size" -gt "$off" ]; then
+      tail -c "+$((off + 1))" "$f" | head -c "$((size - off))" | LC_ALL=C grep -aEi "$ERR_RE" | redact \
+        | sed "s/^/$now	/" >> "$st.errors" || true
+    fi
+    echo "$size" > "$st.offset"
+    if [ -f "$st.errors" ]; then
+      awk -F '\t' -v cut="$((now - DAY))" '$1 >= cut' "$st.errors" | tail -n 500 > "$st.errors.new"
+      mv -f "$st.errors.new" "$st.errors"
+    fi
+    count="$(cat "$st.errors" 2>/dev/null | wc -l | tr -d ' ')"
+    # 2. Rotate.
+    if [ "$size" -ge "$MAX_BYTES" ]; then
+      rm -f "$f.$KEEP.gz"
+      i=$((KEEP - 1)); while [ "$i" -ge 1 ]; do
+        [ -f "$f.$i.gz" ] && mv -f "$f.$i.gz" "$f.$((i + 1)).gz"
+        i=$((i - 1))
+      done
+      cat "$f" | gzip -c > "$f.1.gz"
+      chown "root:$LOG_GROUP" "$f.1.gz"; chmod 640 "$f.1.gz"
+      : > "$f"
+      echo 0 > "$st.offset"
+    fi
+    # 3. launchd's view of the job that writes it.
+    info="$(launchctl print "system/$PREFIX.$base" 2>/dev/null || true)"
+    runs="$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*runs = \([0-9][0-9]*\)$/\1/p' | head -1)"
+    last="$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*last exit code = \([^[:space:]].*\)$/\1/p' | head -1 | cut -c1-60)"
+    printf 'log\t%s\t%s\t%s\t%s\t%s\t%s\n' "$base" "$size" "$(stat -f %m "$f")" "${runs:--}" "${last:--}" "$count" >> "$SUM"
+    if [ -f "$st.errors" ]; then tail -n "$SHOW" "$st.errors" | sed "s/^/err	$base	/" >> "$SUM"; fi
+  done
+  chown "root:$(id -g "$SERVICE_USER")" "$SUM"; chmod 640 "$SUM"
+  mv -f "$SUM" "$OUT"
+  ;;
+
+*) die "usage: home-server-helper service <name> | remove <name> | tunnel | os-update [check] | logs" ;;
 esac

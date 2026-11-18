@@ -10,6 +10,9 @@
 #   /etc/sudoers.d/home-server-helper        lets the admin user run that one file as root, no password
 #   LaunchDaemon local.home-server.deploy    runs scripts/deploy.sh as the admin user whenever
 #                                            /usr/local/var/home-server/request is touched (deploy on request)
+#   LaunchDaemon local.home-server.logs      runs 'home-server-helper logs' as root every 15 min: rotates
+#                                            the logs in /usr/local/var/log/home-server and writes the
+#                                            summary that server_status shows
 
 set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
@@ -20,11 +23,15 @@ on_macos || die "macOS only for now."
 SUDOERS=/etc/sudoers.d/home-server-helper
 WATCH_LABEL="$HS_LABEL_PREFIX.deploy"
 WATCH_PLIST="/Library/LaunchDaemons/$WATCH_LABEL.plist"
+LOGS_LABEL="$HS_LABEL_PREFIX.logs"
+LOGS_PLIST="/Library/LaunchDaemons/$LOGS_LABEL.plist"
+LOGDIR=/usr/local/var/log/home-server
 
 if [ "${1:-}" = --remove ]; then
   launchctl bootout "system/$WATCH_LABEL" >/dev/null 2>&1 || true
-  rm -f "$WATCH_PLIST" "$SUDOERS" "$HS_HELPER"
-  say "removed the helper, its sudo rule and the deploy watcher. Services keep running."
+  launchctl bootout "system/$LOGS_LABEL" >/dev/null 2>&1 || true
+  rm -f "$WATCH_PLIST" "$LOGS_PLIST" "$SUDOERS" "$HS_HELPER"
+  say "removed the helper, its sudo rule, the deploy watcher and the log job. Services keep running."
   exit 0
 fi
 
@@ -56,6 +63,9 @@ touch "$HS_STATE_DIR/request" "$HS_STATE_DIR/status.txt"
 SVC="$(cfg server.serviceUser svc)"
 chown "$SVC:staff" "$HS_STATE_DIR/request"; chmod 664 "$HS_STATE_DIR/request"
 chown "$ADMIN" "$HS_STATE_DIR/status.txt"; chmod 644 "$HS_STATE_DIR/status.txt"
+install -d -o root -g wheel -m 755 "$LOGDIR"
+[ -f "$LOGDIR/deploy.log" ] && [ ! -L "$LOGDIR/deploy.log" ] || { rm -f "$LOGDIR/deploy.log"; : > "$LOGDIR/deploy.log"; }
+chown "$ADMIN:admin" "$LOGDIR/deploy.log"; chmod 640 "$LOGDIR/deploy.log"
 tmp="$(mktemp)"
 cat > "$tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -74,8 +84,8 @@ cat > "$tmp" <<EOF
   </dict>
   <key>RunAtLoad</key><false/>
   <key>WatchPaths</key><array><string>$HS_STATE_DIR/request</string></array>
-  <key>StandardOutPath</key><string>$ADMIN_HOME/Library/Logs/home-server-deploy.log</string>
-  <key>StandardErrorPath</key><string>$ADMIN_HOME/Library/Logs/home-server-deploy.log</string>
+  <key>StandardOutPath</key><string>$LOGDIR/deploy.log</string>
+  <key>StandardErrorPath</key><string>$LOGDIR/deploy.log</string>
 </dict>
 </plist>
 EOF
@@ -88,3 +98,26 @@ sudo -u "$ADMIN" mkdir -p "$ADMIN_HOME/.home-server/deploy"
 sudo -u "$ADMIN" touch "$ADMIN_HOME/.home-server/deploy/request.seen"
 launchctl bootstrap system "$WATCH_PLIST"
 say "deploy watcher installed: touch $HS_STATE_DIR/request to deploy"
+
+# 4. Log job: rotation and the summary server_status reads
+tmp="$(mktemp)"
+cat > "$tmp" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LOGS_LABEL</string>
+  <key>ProgramArguments</key><array><string>$HS_HELPER</string><string>logs</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>900</integer>
+  <key>StandardOutPath</key><string>/var/log/home-server-logs.log</string>
+  <key>StandardErrorPath</key><string>/var/log/home-server-logs.log</string>
+</dict>
+</plist>
+EOF
+plutil -lint "$tmp" >/dev/null || die "rendered log job plist is invalid: $tmp"
+install -o root -g wheel -m 644 "$tmp" "$LOGS_PLIST"; rm -f "$tmp"
+launchctl bootout "system/$LOGS_LABEL" >/dev/null 2>&1 || true
+launchctl bootstrap system "$LOGS_PLIST"
+say "log job installed: logs live in $LOGDIR (the admin group can read them), rotated at 1 MB"
+say "services move their logs there on their next deploy; run scripts/deploy.sh --force once to move them all"

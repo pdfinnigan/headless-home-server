@@ -22,7 +22,7 @@ Everything here is on after `scripts/harden.sh` and `scripts/install-helper.sh`,
    until your admin account has a key, so it can't lock you out.
 6. **One narrow passwordless sudo rule.** It covers `/usr/local/sbin/home-server-helper` and nothing
    else. The helper can only create hidden non-admin service users, install staged files into a
-   service user's home and start them as that user, so it gives your admin account no new root powers. `/usr/local/sbin` is root-owned so
+   service user's home and start them as that user, and install Apple's pending macOS updates (`os-update`, no package names or flags, so the worst misuse is an unplanned restart). It gives your admin account no other root powers. `/usr/local/sbin` is root-owned so
    nothing running as you can replace the helper, and install-helper.sh only installs a helper
    whose hash matches `scripts/home-server-helper.sha256`.
 7. **Access-protected services are enforced at the tunnel.** With `auth: access`, the ingress rule

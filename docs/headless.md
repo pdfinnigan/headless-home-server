@@ -28,8 +28,8 @@ trip to the machine after a reboot.
 ## Services are LaunchDaemons
 
 Every service and the tunnel run as LaunchDaemons under the service user. They start at boot,
-before anyone logs in, and restart if they exit. Logs are in the service user's
-`~/Library/Logs/<service>.log`.
+before anyone logs in, and restart if they exit. Logs are in
+`/usr/local/var/log/home-server/<service>.log` (docs/operate.md).
 
 ## Laptops as servers
 
