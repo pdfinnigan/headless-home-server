@@ -273,6 +273,12 @@
           "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
           "description": "Tools whose calls the public GET /stats/recent feed may show (app family, tool name, minute, latency, ok). Empty by default, which keeps the feed empty. List only tools whose names say nothing private."
         },
+        "feedApps": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9 ._-]{0,39}$" },
+          "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 .-]{0,29}$" },
+          "description": "Extra app names for the public feed: { \"<lowercase text in the client name>\": \"<label>\" }, checked before the built-in ones (Claude, ChatGPT, Codex, Cursor). Anything unmatched shows as \"AI app\"."
+        },
         "statusPageUrl": {
           "type": "string",
           "pattern": "^https://",

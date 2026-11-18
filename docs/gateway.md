@@ -104,7 +104,8 @@ use. The client sends `Authorization: Bearer <token>` to `https://<gateway.hostn
   origin refuses requests without Access, and the gateway's own probe.
 - **`https://<gateway.hostname>/stats/recent`** (public, for a live feed on a website): the last 12
   calls from the past week to the tools in `gateway.publicFeedTools`, each as app family, tool name,
-  minute, latency rounded to 10 ms and ok. The list is empty by default, so the feed is too. Client
+  minute, latency rounded to 10 ms and ok. The list is empty by default, so the feed is too. Apps show as Claude, ChatGPT, Codex, Cursor
+  or `gateway.feedApps` labels, anything else as "AI app". Client
   names, arguments and results never appear.
 - **`https://<gateway.hostname>/stats/history`** (public, for a status page): per namespace, 90
   daily uptime bars, 24-hour, 30-day and 90-day uptime, latency, and the last 20 incidents. Two

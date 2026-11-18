@@ -6,7 +6,7 @@
  * - Only successful-or-failed real use (USE_OUTCOMES) of the tools in FEED_TOOLS (from
  *   gateway.publicFeedTools in the config). Any other tool never appears, not even as a count.
  *   List only tools whose names say nothing private.
- * - The app is a fixed family name (FEED_APPS) or "AI app"; never a free-text OAuth client name,
+ * - The app is a fixed family name (gateway.feedApps, then FEED_APPS) or "AI app"; never a free-text OAuth client name,
  *   a bearer token name, a client id or an auth method.
  * - Time to the minute, latency rounded to 10 ms, and ok true/false. Never arguments, results,
  *   namespaces, status codes, ids or anything else from the row.
@@ -44,7 +44,28 @@ const FEED_APPS: readonly [RegExp, string][] = [
 	[/cursor/i, "Cursor"],
 ];
 
-export function appFamily(client: string): string {
+const APP_KEY = /^[a-z0-9][a-z0-9 ._-]{0,39}$/;
+const APP_LABEL = /^[A-Za-z0-9][A-Za-z0-9 .-]{0,29}$/;
+
+/** gateway.feedApps: { "<lowercase text in the client name>": "<label>" }, checked before FEED_APPS. */
+export function extraApps(env: Pick<Cloudflare.Env, "FEED_APPS">): [string, string][] {
+	let raw: unknown = env.FEED_APPS ?? {};
+	if (typeof raw === "string") {
+		try {
+			raw = JSON.parse(raw);
+		} catch {
+			return [];
+		}
+	}
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+	return Object.entries(raw as Record<string, unknown>).filter(
+		(entry): entry is [string, string] => APP_KEY.test(entry[0]) && typeof entry[1] === "string" && APP_LABEL.test(entry[1]),
+	);
+}
+
+export function appFamily(client: string, extra: readonly [string, string][] = []): string {
+	const lower = client.toLowerCase();
+	for (const [text, family] of extra) if (lower.includes(text)) return family;
 	for (const [pattern, family] of FEED_APPS) if (pattern.test(client)) return family;
 	return "AI app";
 }
@@ -63,6 +84,7 @@ const CORS = {
 export async function recentFeed(env: Cloudflare.Env, now: number): Promise<RecentFeed> {
 	let rows: Row[] = [];
 	const FEED_TOOLS = feedTools(env);
+	const apps = extraApps(env);
 	if (env.USAGE_DB && FEED_TOOLS.length > 0) {
 		try {
 			await ensureSchema(env.USAGE_DB);
@@ -84,7 +106,7 @@ export async function recentFeed(env: Cloudflare.Env, now: number): Promise<Rece
 			.filter((row) => FEED_TOOLS.includes(row.tool))
 			.map((row) => ({
 				at: new Date(Math.floor(row.ts / MINUTE_MS) * MINUTE_MS).toISOString(),
-				app: appFamily(row.client),
+				app: appFamily(row.client, apps),
 				tool: row.tool,
 				ms: Math.max(10, Math.round(row.duration_ms / 10) * 10),
 				ok: row.outcome === "ok",

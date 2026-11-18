@@ -79,6 +79,8 @@ if (!Array.isArray(hidden) || hidden.some((name) => typeof name !== "string" || 
 
 const feedTools = gw.publicFeedTools ?? [];
 if (!Array.isArray(feedTools) || feedTools.some((tool) => typeof tool !== "string" || !/^[A-Za-z0-9_.-]{1,64}$/.test(tool))) fail("gateway.publicFeedTools must list tool names");
+const feedApps = gw.feedApps ?? {};
+if (!feedApps || typeof feedApps !== "object" || Array.isArray(feedApps) || Object.entries(feedApps).some(([k, v]) => !/^[a-z0-9][a-z0-9 ._-]{0,39}$/.test(k) || typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 .-]{0,29}$/.test(v))) fail("gateway.feedApps must map lowercase name text to a short label");
 const statusPage = gw.statusPageUrl ?? "";
 if (statusPage && !/^https:\/\/[^\s"<>]+$/.test(statusPage)) fail("gateway.statusPageUrl must be an https URL");
 
@@ -89,6 +91,7 @@ const vars = {
 	NAMESPACES: namespaces,
 	STATUS_HIDDEN: hidden,
 	FEED_TOOLS: feedTools,
+	...(Object.keys(feedApps).length ? { FEED_APPS: feedApps } : {}),
 	...(statusPage ? { STATUS_PAGE_URL: statusPage } : {}),
 };
 // Hashes of bearer tokens are safe in config: a token is 32 random bytes, so its hash can't be reversed.

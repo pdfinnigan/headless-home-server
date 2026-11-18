@@ -57,7 +57,7 @@ test("parseServices takes name:port pairs and refuses anything else", () => {
 	]);
 	assert.deepEqual(parseServices(undefined), []);
 	assert.throws(() => parseServices("memory"), /name:port/);
-	assert.throws(() => parseServices("10.0.0.1:80"), /name:port/);
+	assert.throws(() => parseServices("192.0.2.1:80"), /name:port/);
 	assert.throws(() => parseServices("x:99999"), /name:port/);
 });
 

@@ -2,7 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { appFamily, RECENT_LIMIT, recentFeed } from "../src/recent";
+import { appFamily, extraApps, RECENT_LIMIT, recentFeed } from "../src/recent";
 import { ensureSchema } from "../src/usage";
 import { setOriginHandler } from "./origin";
 
@@ -66,6 +66,14 @@ describe("public request feed", () => {
 		expect(appFamily("ChatGPT")).toBe("ChatGPT");
 		expect(appFamily("codex")).toBe("Codex");
 		expect(appFamily("Some Person's Script")).toBe("AI app");
+	});
+
+	it("adds app names from gateway.feedApps, and only well-formed ones", () => {
+		const apps = extraApps({ FEED_APPS: { "home-bot": "Home Bot", "Bad Key": "x", ok: "<script>" } });
+		expect(apps).toEqual([["home-bot", "Home Bot"]]);
+		expect(appFamily("home-bot", apps)).toBe("Home Bot");
+		expect(appFamily("claude.ai", apps)).toBe("Claude");
+		expect(extraApps({ FEED_APPS: "not json" })).toEqual([]);
 	});
 
 	it("caps the feed", async () => {

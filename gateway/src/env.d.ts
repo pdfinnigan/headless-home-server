@@ -20,6 +20,8 @@ declare global {
 			STATUS_HIDDEN?: string | string[];
 			// Tools the public /stats/recent feed may show (src/recent.ts). Empty or unset: the feed is empty.
 			FEED_TOOLS?: string | string[];
+			// Extra app names for that feed: { "<lowercase text in the client name>": "<label>" } (src/recent.ts)
+			FEED_APPS?: string | Record<string, string>;
 			// The public status page that /alerts links back to (src/alerts.ts). Optional.
 			STATUS_PAGE_URL?: string;
 
