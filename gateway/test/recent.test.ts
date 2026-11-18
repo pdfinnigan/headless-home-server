@@ -37,7 +37,7 @@ describe("public request feed", () => {
 
 	it("shows memory, trades and ops-status calls only, newest first, coarsened", async () => {
 		await insert(NOW - 1 * MIN - 12_345, "Claude", "memory_recall", { ms: 143 });
-		await insert(NOW - 2 * MIN, "grok-bot", "memory_search", { outcome: "tool_error", ms: 4 });
+		await insert(NOW - 2 * MIN, "laptop-bot", "memory_search", { outcome: "tool_error", ms: 4 });
 		await insert(NOW - 3 * MIN, "Claude", "mail_search", { namespace: "mail" });
 		await insert(NOW - 4 * MIN, "Claude", "deploy_request", { namespace: "ops" });
 		await insert(NOW - 4 * MIN - 30_000, "Claude", "deploy_status", { namespace: "ops" });
@@ -52,12 +52,12 @@ describe("public request feed", () => {
 		const feed = await recentFeed(env, NOW);
 		expect(feed.requests).toEqual([
 			{ at: "2026-11-15T19:28:00.000Z", app: "Claude", tool: "memory_recall", ms: 140, ok: true },
-			{ at: "2026-11-15T19:28:00.000Z", app: "Grok", tool: "memory_search", ms: 10, ok: false },
+			{ at: "2026-11-15T19:28:00.000Z", app: "AI app", tool: "memory_search", ms: 10, ok: false },
 			{ at: "2026-11-15T19:25:00.000Z", app: "Claude", tool: "trades_top_movers", ms: 310, ok: true },
 			{ at: "2026-11-15T19:25:00.000Z", app: "Claude", tool: "server_status", ms: 90, ok: true },
 		]);
 		const text = JSON.stringify(feed);
-		for (const hidden of ["mail", "deploy", "task_", "grok-bot", "oauth", "namespace", "tools/list", "unknown"]) expect(text).not.toContain(hidden);
+		for (const hidden of ["mail", "deploy", "task_", "laptop-bot", "oauth", "namespace", "tools/list", "unknown"]) expect(text).not.toContain(hidden);
 	});
 
 	it("never passes a free-text client name through", () => {

@@ -41,7 +41,6 @@ const FEED_APPS: readonly [RegExp, string][] = [
 	[/claude/i, "Claude"],
 	[/chatgpt|openai/i, "ChatGPT"],
 	[/codex/i, "Codex"],
-	[/grok/i, "Grok"],
 	[/cursor/i, "Cursor"],
 ];
 
