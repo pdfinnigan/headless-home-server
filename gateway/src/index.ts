@@ -5,7 +5,11 @@
  *   /authorize /callback              GitHub sign-in, one allowed account (src/github-handler.ts)
  *   /token /register /.well-known/*   the OAuth authorization server
  *   /stats                            public coarse health and usage (src/stats.ts)
+ *   /stats/recent                     public feed of the last few calls to gateway.publicFeedTools, coarsened (src/recent.ts)
+ *   /stats/history                    public 90-day uptime, latency and incidents for the status page (src/history.ts)
  *   /usage                            usage per app and namespace, after GitHub sign-in
+ *   /alerts                           push alerts for the status page: public key and latest alert,
+ *                                     and adding devices after GitHub sign-in (src/alerts.ts)
  *
  * Each namespace is its own OAuth resource (RFC 8707): a token for /memory is refused at /mail.
  * Who may use a namespace is its `clients` list, checked on every request; the namespace's tool
@@ -15,10 +19,13 @@ import { OAuthAuthorizationServer, OAuthResourceServer, type OAuthResourceContex
 import { ISSUER, NAMESPACES } from "./config";
 import { GitHubHandler } from "./github-handler";
 import { recordHealth } from "./health";
+import { handleHistory } from "./history";
 import { isPlainObject } from "./json";
 import type { Namespace } from "./namespaces";
 import { type Caller, callerGrantId, forwardToOrigin } from "./proxy";
 import { registrationRedirectsAllowed } from "./redirects";
+import { recordRefused } from "./refused";
+import { handleRecent } from "./recent";
 import { handleStats } from "./stats";
 import { recordUsage, type RequestMeta } from "./usage";
 
@@ -165,12 +172,19 @@ export default {
 		}
 		const { pathname } = new URL(request.url);
 		if (pathname === "/stats") return handleStats(request, env, ctx);
+		if (pathname === "/stats/recent") return handleRecent(request, env, ctx);
+		if (pathname === "/stats/history") return handleHistory(request, env, ctx);
 
 		// The sign-in and dashboard handlers use the same helpers OAuthProvider used to inject.
 		const withOAuth = { ...env, OAUTH_PROVIDER: authorizationServer.getOAuthApi(env) } as Cloudflare.Env;
 		const resource = serverFor(pathname);
-		if (resource) return resource.fetch(request, withOAuth, ctx);
-		if (pathname === "/authorize" || pathname === "/callback" || pathname.startsWith("/callback/") || pathname === "/usage") {
+		if (resource) {
+			const startedAt = Date.now();
+			const response = await resource.fetch(request, withOAuth, ctx);
+			// Tokens that match no app or sign-in never reach the namespace handler; count them here (src/refused.ts).
+			return recordRefused(request, response, env, ctx, startedAt);
+		}
+		if (pathname === "/authorize" || pathname === "/callback" || pathname.startsWith("/callback/") || pathname === "/usage" || pathname === "/alerts" || pathname.startsWith("/alerts/")) {
 			return GitHubHandler.fetch(request, withOAuth, ctx);
 		}
 		return authorizationServer.fetch(request, withOAuth, ctx);

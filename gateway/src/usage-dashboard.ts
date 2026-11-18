@@ -19,7 +19,11 @@ import {
 	revokeGithubToken,
 } from "./github";
 import { ISSUER } from "./config";
-import { ensureSchema } from "./usage";
+import { ensureSchema, FAILURE_OUTCOMES, sqlList } from "./usage";
+
+// "errors" and the recent errors list count real use that failed, from the same constant.
+// Probes, protocol replies, policy refusals and unknown callers are not errors.
+const IS_FAILURE = `outcome IN (${sqlList(FAILURE_OUTCOMES)})`;
 
 const SESSION_COOKIE = "__Host-usage_session";
 const LOGIN_COOKIE = "__Host-usage_login";
@@ -101,14 +105,14 @@ export async function usageReport(db: D1Database, days: number, now: number): Pr
 	const [clients, tools, daily, errors] = await db.batch([
 		db
 			.prepare(
-				`SELECT client, COUNT(*) AS requests, SUM(rpc = 'tools/call') AS tool_calls, SUM(outcome != 'ok') AS errors,
+				`SELECT client, COUNT(*) AS requests, SUM(rpc = 'tools/call') AS tool_calls, SUM(${IS_FAILURE}) AS errors,
 				 CAST(AVG(duration_ms) AS INTEGER) AS avg_ms, MAX(duration_ms) AS max_ms, MAX(ts) AS last_seen
 				 FROM usage WHERE ts >= ? GROUP BY client ORDER BY tool_calls DESC, requests DESC`,
 			)
 			.bind(since),
 		db
 			.prepare(
-				`SELECT client, tool, COUNT(*) AS calls, SUM(outcome != 'ok') AS errors, CAST(AVG(duration_ms) AS INTEGER) AS avg_ms
+				`SELECT client, tool, COUNT(*) AS calls, SUM(${IS_FAILURE}) AS errors, CAST(AVG(duration_ms) AS INTEGER) AS avg_ms
 				 FROM usage WHERE ts >= ? AND rpc = 'tools/call' AND tool IS NOT NULL GROUP BY client, tool ORDER BY calls DESC LIMIT 100`,
 			)
 			.bind(since),
@@ -119,7 +123,7 @@ export async function usageReport(db: D1Database, days: number, now: number): Pr
 			)
 			.bind(since),
 		db
-			.prepare(`SELECT ts, client, rpc, tool, status, outcome FROM usage WHERE ts >= ? AND outcome != 'ok' ORDER BY ts DESC LIMIT 25`)
+			.prepare(`SELECT ts, client, rpc, tool, status, outcome FROM usage WHERE ts >= ? AND ${IS_FAILURE} ORDER BY ts DESC LIMIT 25`)
 			.bind(since),
 	]);
 	return {
@@ -213,25 +217,47 @@ ${dailyChart(report.daily, clientNames)}
 </main></body></html>`;
 }
 
+/** Paths a sign-in may return to: the usage page and the alerts page (src/alerts.ts), with their query. */
+const RETURN_PATH = /^\/(usage|alerts)(\?[^#]{0,2000})?$/;
+
+/** Whether this request carries the owner's signed session cookie (shared by /usage and /alerts). */
+export async function signedIn(request: Request, env: Cloudflare.Env, nowMs: number): Promise<boolean> {
+	return validSession(env, readCookie(request, SESSION_COOKIE), Math.floor(nowMs / 1000));
+}
+
+/** Send the browser to GitHub sign-in; /callback/usage then returns it to `returnTo`. */
+export async function startSignIn(env: Cloudflare.Env, returnTo: string): Promise<Response> {
+	const callback = usageCallbackUrl(env);
+	if (!callback) return new Response("Misconfigured", { status: 500 });
+	const state = randomVerifier();
+	const verifier = randomVerifier();
+	const back = RETURN_PATH.test(returnTo) ? returnTo : "/usage";
+	return new Response(null, {
+		status: 302,
+		headers: {
+			Location: githubAuthorizeUrl(env.GITHUB_CLIENT_ID, callback, state, await codeChallenge(verifier)),
+			"Set-Cookie": cookie(LOGIN_COOKIE, `${state}.${verifier}.${base64url(new TextEncoder().encode(back).buffer as ArrayBuffer)}`, LOGIN_SECONDS),
+			"Cache-Control": "no-store",
+		},
+	});
+}
+
+function returnPath(encoded: string | undefined): string {
+	if (!encoded) return "/usage";
+	try {
+		const decoded = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
+		return RETURN_PATH.test(decoded) ? decoded : "/usage";
+	} catch {
+		return "/usage";
+	}
+}
+
 export const usageRoutes = new Hono<{ Bindings: Cloudflare.Env }>();
 
 usageRoutes.get("/usage", async (c) => {
 	const env = c.env;
 	const now = Date.now();
-	if (!(await validSession(env, readCookie(c.req.raw, SESSION_COOKIE), Math.floor(now / 1000)))) {
-		const callback = usageCallbackUrl(env);
-		if (!callback) return new Response("Misconfigured", { status: 500 });
-		const state = randomVerifier();
-		const verifier = randomVerifier();
-		return new Response(null, {
-			status: 302,
-			headers: {
-				Location: githubAuthorizeUrl(env.GITHUB_CLIENT_ID, callback, state, await codeChallenge(verifier)),
-				"Set-Cookie": cookie(LOGIN_COOKIE, `${state}.${verifier}`, LOGIN_SECONDS),
-				"Cache-Control": "no-store",
-			},
-		});
-	}
+	if (!(await signedIn(c.req.raw, env, now))) return startSignIn(env, "/usage");
 	if (!env.USAGE_DB) return new Response("Usage log is not configured (no USAGE_DB binding).", { status: 503, headers: PAGE_HEADERS });
 
 	const requested = Number(c.req.query("days") ?? "7");
@@ -254,7 +280,7 @@ usageRoutes.get("/callback/usage", async (c) => {
 
 	const login = readCookie(c.req.raw, LOGIN_COOKIE)?.split(".");
 	const state = url.searchParams.get("state") ?? "";
-	if (!login || login.length !== 2 || !constantTimeEqual(login[0], state) || state.length === 0) {
+	if (!login || (login.length !== 2 && login.length !== 3) || !constantTimeEqual(login[0], state) || state.length === 0) {
 		return fail(400, "Sign-in expired. Open /usage again.");
 	}
 	const code = url.searchParams.get("code");
@@ -275,7 +301,7 @@ usageRoutes.get("/callback/usage", async (c) => {
 		return fail(403, "Account not allowed");
 	}
 
-	const headers = new Headers({ Location: "/usage", "Cache-Control": "no-store" });
+	const headers = new Headers({ Location: returnPath(login[2]), "Cache-Control": "no-store" });
 	headers.append("Set-Cookie", cookie(SESSION_COOKIE, await sessionCookieValue(env, String(user.id), Math.floor(Date.now() / 1000)), SESSION_SECONDS));
 	headers.append("Set-Cookie", cookie(LOGIN_COOKIE, "", 0));
 	return new Response(null, { status: 302, headers });

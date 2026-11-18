@@ -39,6 +39,49 @@ const ALLOWED_RPC_METHODS = new Set([
 	"notifications/cancelled",
 ]);
 
+// Method names defined by the MCP spec (2025-03-26 through 2026-07-28). A refused method is
+// logged by name only when it is one of these; anything else is logged as "other", so the
+// usage log never stores free text a caller made up.
+const KNOWN_MCP_METHODS = new Set([
+	"initialize",
+	"ping",
+	"server/discover",
+	"tools/list",
+	"tools/call",
+	"resources/list",
+	"resources/templates/list",
+	"resources/read",
+	"resources/subscribe",
+	"resources/unsubscribe",
+	"prompts/list",
+	"prompts/get",
+	"completion/complete",
+	"logging/setLevel",
+	"sampling/createMessage",
+	"elicitation/create",
+	"roots/list",
+	"tasks/get",
+	"tasks/list",
+	"tasks/result",
+	"tasks/cancel",
+	"notifications/initialized",
+	"notifications/cancelled",
+	"notifications/progress",
+	"notifications/message",
+	"notifications/roots/list_changed",
+	"notifications/resources/list_changed",
+	"notifications/resources/updated",
+	"notifications/tools/list_changed",
+	"notifications/prompts/list_changed",
+	"notifications/tasks/status",
+	"notifications/elicitation/complete",
+]);
+
+/** The method name as the usage log may store it: a spec name, or "other". */
+export function loggableMethod(method: string): string {
+	return KNOWN_MCP_METHODS.has(method) ? method : "other";
+}
+
 const REQUEST_HEADERS_TO_FORWARD = [
 	"accept",
 	"content-type",
@@ -330,7 +373,8 @@ export async function forwardToOrigin(
 
 		if (!ALLOWED_RPC_METHODS.has(message.method)) {
 			meta.blocked = "method_not_allowed";
-			log({ evt: "blocked", ns: ns.name, caller: label, reason: "method_not_allowed" });
+			meta.rpc = loggableMethod(message.method);
+			log({ evt: "blocked", ns: ns.name, caller: label, reason: "method_not_allowed", rpc: meta.rpc });
 			// 400, not 404 or a modern error code (-32020/-32021/-32022). A 2026 client that
 			// probes server/discover falls back to initialize when the body is not a modern error.
 			return rpcError(message.id as string | number | null | undefined, -32601, "Method not found", 400);

@@ -8,6 +8,8 @@
     "ISSUER": "https://mcp.example.com",
     "ORIGIN_URL": "https://origin.example.com",
     "ALLOWED_GITHUB_ID": "12345",
+    "STATUS_HIDDEN": ["mcp"],
+    "FEED_TOOLS": ["memory_recall", "memory_list", "memory_read", "memory_search", "memory_add_inbox_note", "trades_top_movers", "server_status", "server_usage"],
     "NAMESPACES": {
       "memory": { "tools": ["memory_recall", "memory_list", "memory_read", "memory_search", "memory_add_inbox_note"], "clients": ["oauth:claude", "oauth:chatgpt", "bearer:laptop", "bearer:bot"] },
       "mail": { "tools": ["mail_search"], "clients": ["oauth:claude", "bearer:laptop"] },

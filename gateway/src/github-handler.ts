@@ -27,12 +27,14 @@ import {
 import { redirectFamily } from "./clients";
 import { ISSUER, namespaceForResource } from "./config";
 import { isPlainObject } from "./json";
+import { alertRoutes } from "./alerts";
 import { usageRoutes } from "./usage-dashboard";
 import { isAllowedErrorRedirect, isAllowedRedirectUri } from "./redirects";
 
 const app = new Hono<{ Bindings: Cloudflare.Env }>();
 
 app.route("/", usageRoutes);
+app.route("/", alertRoutes);
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 

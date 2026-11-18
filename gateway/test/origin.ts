@@ -6,6 +6,7 @@
 type OriginHandler = (request: Request) => Response | Promise<Response>;
 
 let originHandler: OriginHandler | null = null;
+let externalHandler: OriginHandler | null = null;
 let installed = false;
 
 export function installOriginStub(): void {
@@ -20,10 +21,19 @@ export function installOriginStub(): void {
 			}
 			return originHandler(request);
 		}
+		// Push services and the gateway's own URL (the watcher fetches it), when a test stubs them.
+		if (externalHandler && /(push\.apple\.com|fcm\.googleapis\.com|mcp\.example\.com)$/.test(new URL(request.url).hostname)) {
+			return externalHandler(request);
+		}
 		return original(input, init);
 	};
 }
 
 export function setOriginHandler(handler: OriginHandler | null): void {
 	originHandler = handler;
+}
+
+/** Stub push services and https://mcp.example.com (for the watcher); null restores real fetch. */
+export function setExternalHandler(handler: OriginHandler | null): void {
+	externalHandler = handler;
 }

@@ -90,9 +90,10 @@ describe("usage log", () => {
 		]);
 	});
 
-	it("does not record unauthenticated requests, GET streams or DELETE", async () => {
+	it("does not record requests with no token, GET streams or DELETE", async () => {
 		setOriginHandler(() => new Response(null, { status: 200 }));
-		await dispatch(call({ jsonrpc: "2.0", id: 1, method: "ping" }, "wrong-token"));
+		const noToken = new Request(RESOURCE, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+		expect((await dispatch(noToken)).status).toBe(401);
 		for (const method of ["GET", "DELETE"]) {
 			await dispatch(new Request(RESOURCE, { method, headers: { Authorization: `Bearer ${BEARER_TOKEN}` } }));
 		}
@@ -243,8 +244,11 @@ describe("usage page", () => {
 		expect(html).not.toContain("<script>");
 
 		const data = await dispatch(new Request("https://mcp.example.com/usage?format=json", { headers: { Cookie: `__Host-usage_session=${session}` } }));
-		const report = (await data.json()) as { days: number; clients: Array<{ client: string; tool_calls: number; errors: number }> };
+		const report = (await data.json()) as { days: number; clients: Array<{ client: string; tool_calls: number; errors: number }>; errors: unknown[] };
 		expect(report.days).toBe(7);
-		expect(report.clients).toEqual([expect.objectContaining({ client: "laptop", tool_calls: 2, errors: 1 })]);
+		// The refused tool is a policy block, not a failure, so it is not an error.
+		expect(report.clients).toEqual([expect.objectContaining({ client: "laptop", tool_calls: 2, errors: 0 })]);
+		// The recent errors list uses the same rule as the errors column.
+		expect(report.errors).toEqual([]);
 	});
 });

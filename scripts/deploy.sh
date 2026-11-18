@@ -258,6 +258,7 @@ if [ -n "$(cfg gateway.hostname)" ] && [ -d "$HS_ROOT/gateway" ]; then
       rm -rf "$build"; mkdir -p "$build"
       git archive --format=tar HEAD:gateway | tar -xf - -C "$build"
       cp "$gw" "$build/wrangler.jsonc"
+      wrc=0; node "$HS_ROOT/gateway/scripts/render-config.mjs" --watcher "$HS_CONFIG" > "$build/wrangler.watcher.jsonc" || wrc=$?
       # A Workers-only API token, if you'd rather not keep wrangler signed in on the server.
       cf_env="$HOME/.home-server/secrets/cloudflare.env"
       (
@@ -267,6 +268,9 @@ if [ -n "$(cfg gateway.hostname)" ] && [ -d "$HS_ROOT/gateway" ]; then
         # The gateway is the front door: a failing test stops the deploy and the live Worker stays as it was.
         npm test --silent || { echo "gateway: tests failed; not deploying" >&2; exit 1; }
         npx wrangler deploy
+        # The watcher (gateway/src/watcher.ts): a separate Worker that alerts if the health checks stop.
+        if [ "$wrc" = 0 ]; then npx wrangler deploy -c wrangler.watcher.jsonc
+        elif [ "$wrc" != 3 ]; then exit 1; fi
       ) || die "gateway: deploy failed (see above). If it was wrangler: is wrangler signed in on the server (npx wrangler login), or is $cf_env set? (docs/gateway.md)"
       echo "$tree" > "$STATE/gateway.tree"; cp "$gw" "$STATE/gateway.jsonc"
       did=1

@@ -20,6 +20,7 @@ import type { Caller } from "./proxy";
 export type RequestMeta = {
 	/** The namespace the request was for, e.g. memory. */
 	namespace?: string;
+	/** The JSON-RPC method. On a method_not_allowed refusal, the attempted method (a spec name or "other"). */
 	rpc?: string;
 	tool?: string;
 	/** Refused by the gate before reaching the origin. */
@@ -28,7 +29,27 @@ export type RequestMeta = {
 	upstreamFailed?: boolean;
 };
 
-export type Outcome = "ok" | "tool_error" | "rpc_error" | "http_error" | "blocked" | "upstream_error";
+/**
+ * ok, tool_error, rpc_error, http_error and upstream_error are real use: success rate is ok over those five.
+ * The rest are not use and never count toward it:
+ * - blocked: a policy refusal of a known caller (tool not allowed, protocol version, header mismatch, method).
+ * - probe: a refused server/discover, the connection probe newer clients send before falling back to initialize.
+ * - protocol: a client reply with no method (how a client answers roots/list), refused on purpose.
+ * - refused: a token that matches no app and no sign-in (src/refused.ts). Not one of the app's own expired tokens.
+ */
+export type Outcome = "ok" | "tool_error" | "rpc_error" | "http_error" | "upstream_error" | "blocked" | "probe" | "protocol" | "refused";
+
+/** Outcomes that are real use. Success rate = ok / all of these. */
+export const USE_OUTCOMES: readonly Outcome[] = ["ok", "tool_error", "rpc_error", "http_error", "upstream_error"];
+/** Real use that failed. */
+export const FAILURE_OUTCOMES: readonly Outcome[] = ["tool_error", "rpc_error", "http_error", "upstream_error"];
+/** Rows that are not requests anyone meant to make: left out of request counts too. */
+export const NOT_REQUEST_OUTCOMES: readonly Outcome[] = ["probe", "protocol", "refused"];
+
+/** `'a', 'b'` for an SQL IN list. Only ever built from the constants above. */
+export function sqlList(outcomes: readonly Outcome[]): string {
+	return outcomes.map((outcome) => `'${outcome}'`).join(", ");
+}
 
 export type UsageRow = {
 	ts: number;
@@ -39,6 +60,8 @@ export type UsageRow = {
 	tool: string | null;
 	status: number;
 	outcome: Outcome;
+	/** Why the gate refused it (meta.blocked, or unknown_token), else null. */
+	blocked_reason: string | null;
 	duration_ms: number;
 };
 
@@ -70,29 +93,46 @@ async function addNamespaceColumn(db: D1Database): Promise<void> {
 	}
 }
 
-// Per isolate: the table is created on the first write, so there is no migration to run.
+async function addBlockedReasonColumn(db: D1Database): Promise<void> {
+	// SQLite has no ADD COLUMN IF NOT EXISTS. Once the column is there this fails with
+	// "duplicate column name", which is the expected answer on every later isolate.
+	try {
+		await db.prepare("ALTER TABLE usage ADD COLUMN blocked_reason TEXT").run();
+	} catch (error) {
+		if (!/duplicate column/i.test(String(error))) throw error;
+	}
+}
+
+// Per isolate: the table is created (or upgraded) on first use, so there is no migration to run.
 let schemaReady: Promise<void> | null = null;
 
 export function ensureSchema(db: D1Database): Promise<void> {
 	if (!schemaReady) {
-		schemaReady = db
-			.batch(SCHEMA.map((sql) => db.prepare(sql)))
-			.then(() => addNamespaceColumn(db))
-			.then(() => undefined)
-			.catch((error) => {
-				schemaReady = null;
-				throw error;
-			});
+		schemaReady = (async () => {
+			await db.batch(SCHEMA.map((sql) => db.prepare(sql)));
+			await addNamespaceColumn(db);
+			await addBlockedReasonColumn(db);
+		})().catch((error) => {
+			schemaReady = null;
+			throw error;
+		});
 	}
 	return schemaReady;
 }
 
-async function insertRow(db: D1Database, row: UsageRow): Promise<void> {
+export async function insertRow(db: D1Database, row: UsageRow): Promise<void> {
 	await ensureSchema(db);
 	await db
-		.prepare("INSERT INTO usage (ts, namespace, client, auth, rpc, tool, status, outcome, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		.bind(row.ts, row.namespace, row.client, row.auth, row.rpc, row.tool, row.status, row.outcome, row.duration_ms)
+		.prepare("INSERT INTO usage (ts, namespace, client, auth, rpc, tool, status, outcome, blocked_reason, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		.bind(row.ts, row.namespace, row.client, row.auth, row.rpc, row.tool, row.status, row.outcome, row.blocked_reason, row.duration_ms)
 		.run();
+}
+
+/** Outcome of a request the gate refused: a probe, a protocol reply, or a policy block. */
+export function blockedOutcome(meta: RequestMeta): Outcome {
+	if (meta.blocked === "method_not_allowed" && meta.rpc === "server/discover") return "probe";
+	if (meta.blocked === "client_response") return "protocol";
+	return "blocked";
 }
 
 // OAuth client names per isolate. Registered names don't change; CIMD lookups fetch a document.
@@ -183,7 +223,7 @@ export function recordUsage(
 	let returned = response;
 	let outcome: Promise<Outcome>;
 	if (meta.blocked) {
-		outcome = Promise.resolve("blocked");
+		outcome = Promise.resolve(blockedOutcome(meta));
 	} else if (meta.upstreamFailed) {
 		outcome = Promise.resolve("upstream_error");
 	} else if (response.status < 200 || response.status >= 300) {
@@ -210,6 +250,7 @@ export function recordUsage(
 					tool: meta.tool ?? null,
 					status: response.status,
 					outcome: result,
+					blocked_reason: meta.blocked ?? null,
 					duration_ms: durationMs,
 				};
 				await insertRow(db, row);

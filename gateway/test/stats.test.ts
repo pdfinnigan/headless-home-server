@@ -42,7 +42,9 @@ describe("public stats", () => {
 			requests_total: 4,
 			apps_7d: 3,
 			success_rate_7d: 66.7,
+			refused_7d: 0,
 			last_active: "2026-11-13T11:05:00.000Z",
+			recent_feed: "/stats/recent",
 			generated_at: new Date(NOW).toISOString(),
 		});
 		const text = JSON.stringify(stats);
@@ -96,10 +98,10 @@ describe("public stats", () => {
 		await waitOnExecutionContext(ctx);
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
-		expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
+		expect(response.headers.get("Cache-Control")).toBe("public, max-age=300");
 		const body = (await response.json()) as Record<string, unknown>;
 		expect(Object.keys(body).sort()).toEqual(
-			["apps_7d", "generated_at", "last_active", "namespaces", "online", "requests_24h", "requests_7d", "requests_total", "success_rate_7d"],
+			["apps_7d", "generated_at", "last_active", "namespaces", "online", "recent_feed", "refused_7d", "requests_24h", "requests_7d", "requests_total", "success_rate_7d"],
 		);
 	});
 

@@ -2,6 +2,11 @@
 // Print the gateway's wrangler config, built from the home-server config, on stdout.
 //
 //   node gateway/scripts/render-config.mjs <path to home-server config> > gateway/wrangler.jsonc
+//   node gateway/scripts/render-config.mjs --watcher <config> > gateway/wrangler.watcher.jsonc
+//
+// --watcher prints the config of the watcher Worker (src/watcher.ts) instead: a separate Worker,
+// with the same D1 database, that alerts if the gateway's own health checks stop. It exits 3 when
+// the gateway has no usage database.
 //
 // scripts/deploy.sh runs this and deploys the result; you never edit wrangler.jsonc by hand.
 // Every service with an `mcp` block becomes a namespace at https://<gateway.hostname>/<service name>.
@@ -13,8 +18,10 @@ const fail = (msg, code = 1) => {
 	process.exit(code);
 };
 
-const path = process.argv[2];
-if (!path) fail("usage: render-config.mjs <home-server config>");
+const args = process.argv.slice(2);
+const watcher = args[0] === "--watcher";
+const path = watcher ? args[1] : args[0];
+if (!path) fail("usage: render-config.mjs [--watcher] <home-server config>");
 const config = JSON.parse(readFileSync(path, "utf8"));
 const gw = config.gateway ?? {};
 const services = (config.services ?? []).filter((s) => s.mcp);
@@ -46,11 +53,43 @@ for (const [name, ns] of Object.entries(gw.extraNamespaces ?? {})) {
 	namespaces[name] = ns;
 }
 
+const database = gw.usageDatabase === false ? null : { binding: "USAGE_DB", database_name: gw.usageDatabase ?? "home-server-usage", ...(gw.usageDatabaseId ? { database_id: gw.usageDatabaseId } : {}) };
+
+if (watcher) {
+	if (!database) fail("the watcher needs the gateway's usage database (gateway.usageDatabase is false)", 3);
+	const config = {
+		$schema: "node_modules/wrangler/config-schema.json",
+		name: `${gw.workerName ?? "home-server-gateway"}-watcher`,
+		main: "src/watcher.ts",
+		compatibility_date: "2025-03-10",
+		compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
+		workers_dev: false,
+		preview_urls: false,
+		vars: { ISSUER: `https://${hostname}` },
+		d1_databases: [database],
+		triggers: { crons: ["*/5 * * * *"] },
+		observability: { enabled: true },
+	};
+	process.stdout.write(`// Written by gateway/scripts/render-config.mjs --watcher from the home-server config. Edit that, not this.\n${JSON.stringify(config, null, 2)}\n`);
+	process.exit(0);
+}
+
+const hidden = gw.statusHidden ?? [];
+if (!Array.isArray(hidden) || hidden.some((name) => typeof name !== "string" || !namespaces[name])) fail("gateway.statusHidden must list namespace names");
+
+const feedTools = gw.publicFeedTools ?? [];
+if (!Array.isArray(feedTools) || feedTools.some((tool) => typeof tool !== "string" || !/^[A-Za-z0-9_.-]{1,64}$/.test(tool))) fail("gateway.publicFeedTools must list tool names");
+const statusPage = gw.statusPageUrl ?? "";
+if (statusPage && !/^https:\/\/[^\s"<>]+$/.test(statusPage)) fail("gateway.statusPageUrl must be an https URL");
+
 const vars = {
 	ISSUER: `https://${hostname}`,
 	ORIGIN_URL: `https://${originHostname}`,
 	ALLOWED_GITHUB_ID: githubId,
 	NAMESPACES: namespaces,
+	STATUS_HIDDEN: hidden,
+	FEED_TOOLS: feedTools,
+	...(statusPage ? { STATUS_PAGE_URL: statusPage } : {}),
 };
 // Hashes of bearer tokens are safe in config: a token is 32 random bytes, so its hash can't be reversed.
 for (const [client, hash] of Object.entries(gw.bearerClients ?? {})) {
@@ -70,7 +109,7 @@ const wrangler = {
 	routes: [{ pattern: hostname, custom_domain: true }],
 	vars,
 	kv_namespaces: [{ binding: "OAUTH_KV", id: kvId }],
-	...(gw.usageDatabase === false ? {} : { d1_databases: [{ binding: "USAGE_DB", database_name: gw.usageDatabase ?? "home-server-usage" }] }),
+	...(database ? { d1_databases: [database] } : {}),
 	triggers: { crons: ["*/5 * * * *"] },
 	observability: { enabled: true },
 	// Secrets (GITHUB_CLIENT_ID/SECRET, CF_ACCESS_CLIENT_ID/SECRET) are set with scripts/gateway-secrets.sh

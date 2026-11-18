@@ -16,5 +16,6 @@ access and monitoring are in [docs/gateway.md](../docs/gateway.md).
 | `src/clients.ts`, `src/redirects.ts` | Which app a client is, from its redirect URIs, and which redirect URIs are allowed |
 | `src/usage.ts`, `src/usage-dashboard.ts` | D1 usage log (namespace, app, method, tool, outcome; never payloads) and `/usage` |
 | `src/health.ts`, `src/stats.ts` | 5-minute end-to-end probe per namespace and the public `/stats` |
+| `src/recent.ts` | Public `/stats/recent`: the last few calls to `gateway.publicFeedTools`, coarsened, for a live website feed (off by default) |
 
 `npm test` runs the suite against `wrangler.test.jsonc` with a stubbed origin.

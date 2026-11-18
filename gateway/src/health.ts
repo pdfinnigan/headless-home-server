@@ -8,10 +8,12 @@
  *
  * The cron trigger (wrangler `triggers.crons`, every 5 minutes) probes every namespace and keeps
  * a week of results in D1, so /stats can show uptime and the operate skill can see when
- * something went down. Without USAGE_DB the probe still runs and logs; nothing is stored.
+ * something went down. Each round also feeds the status page's 90-day history, incidents and
+ * alerts (src/history.ts). Without USAGE_DB the probe still runs and logs; nothing is stored.
  */
 
 import { NAMESPACES } from "./config";
+import { alertChanges, previousState, updateHistory } from "./history";
 import type { Namespace } from "./namespaces";
 import { originUrl } from "./proxy";
 
@@ -55,6 +57,9 @@ const SCHEMA = [
 		ms INTEGER NOT NULL
 	)`,
 	"CREATE INDEX IF NOT EXISTS health_ns_ts ON health (namespace, ts)",
+	// Every read and the prune filter on ts alone (MAX(ts), ts = ?, ts >= ?, ts < ?). Without this
+	// each one scanned the whole table, several times per 5-minute round: millions of D1 rows a day.
+	"CREATE INDEX IF NOT EXISTS health_ts ON health (ts)",
 ];
 
 /** The scheduled handler: probe everything, store it, drop week-old rows. Never throws. */
@@ -67,10 +72,14 @@ export async function recordHealth(env: Cloudflare.Env, now: number): Promise<Pr
 	if (!db) return probes;
 	try {
 		await db.batch(SCHEMA.map((sql) => db.prepare(sql)));
+		const previous = await previousState(db);
 		await db.batch([
 			...probes.map((p) => db.prepare("INSERT INTO health (ts, namespace, online, ms) VALUES (?, ?, ?, ?)").bind(now, p.namespace, p.online ? 1 : 0, p.ms)),
 			db.prepare("DELETE FROM health WHERE ts < ?").bind(now - KEEP_MS),
 		]);
+		// Daily rollups, incidents and alerts for the status page (src/history.ts).
+		const changes = await updateHistory(db, now, probes, previous);
+		await alertChanges(env, db, changes, now);
 	} catch (error) {
 		console.log(JSON.stringify({ evt: "health_write_failed", detail: error instanceof Error ? error.name : "unknown" }));
 	}
