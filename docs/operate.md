@@ -37,6 +37,14 @@ whether each service answers. `--force` redeploys everything.
   Then use `git@github-<repo>:<owner>/<repo>.git` as `source.repo`. deploy.sh fetches only the
   pinned commit, into `~/.home-server/deploy/sources/`.
 
+## From your AI apps
+
+`services/ops` is an MCP server for exactly this: `server_status` (a verdict with reasons, the
+machine, each service locally and through the gateway, the last deploys, and the log summary),
+`server_usage`, `deploy_request` and `deploy_status`. Publish it through the gateway with
+`"user": "shared"` (it reads the deploy folder and the log summary) and list only the apps that
+should be able to deploy. The example config has an `ops` entry to copy.
+
 ## macOS updates
 
 `ssh <alias> 'sudo -n /usr/local/sbin/home-server-helper os-update check'` lists pending updates.

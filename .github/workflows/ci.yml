@@ -23,6 +23,20 @@ jobs:
       - run: npm test
       # The example config must render; it exits 3 ("not set up") because it still has example values.
       - run: node scripts/render-config.mjs ../config/home-server.example.json || test $? -eq 3
+  ops:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ops
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/ops/package-lock.json
+      - run: npm ci
+      - run: npm test
   scripts:
     runs-on: ubuntu-latest
     steps:
